@@ -11,6 +11,10 @@ import 'package:myxcreate/update_page.dart';
 
 const String apiUrl = "https://api.xcreate.my.id/myxcreate/cek_update_apk.php";
 
+// 🎨 Flat ungu utama
+const Color primaryPurple = Color(0xFF6A38C2);
+const Color primaryPurpleSoft = Color(0x1A6A38C2);
+
 class MainPage extends StatefulWidget {
   const MainPage({super.key});
 
@@ -155,14 +159,14 @@ class _MainPageState extends State<MainPage> {
       child: Container(
         height: 70,
         decoration: BoxDecoration(
-          color: Colors.deepPurple, // Bottom bar tetap ungu
+          color: primaryPurple, // full ungu
           borderRadius: const BorderRadius.only(
             topLeft: Radius.circular(30),
             topRight: Radius.circular(30),
           ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.1),
+              color: primaryPurple.withOpacity(0.3),
               blurRadius: 10,
               offset: const Offset(0, -2),
             ),
@@ -220,20 +224,19 @@ class _MainPageState extends State<MainPage> {
           shape: BoxShape.circle,
           boxShadow: [
             BoxShadow(
-              color: Colors.purple.withOpacity(0.3),
+              color: primaryPurple.withOpacity(0.3),
               blurRadius: 8,
               offset: const Offset(0, 4),
             ),
           ],
           border: Border.all(
-            color: Colors.deepPurple,
+            color: primaryPurple,
             width: 4,
           ),
         ),
         child: Icon(
           Icons.shopping_cart,
-          color:
-              isActive ? Colors.deepPurple : Colors.deepPurple.withOpacity(0.8),
+          color: isActive ? primaryPurple : primaryPurple.withOpacity(0.8),
           size: 32,
         ),
       ),

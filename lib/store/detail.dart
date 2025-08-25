@@ -1,9 +1,11 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // ⬅️ untuk copy ke clipboard
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:share_plus/share_plus.dart'; // ⬅️ untuk share link
 import 'preview.dart';
 
 class DetailPage extends StatefulWidget {
@@ -44,7 +46,8 @@ class _DetailPageState extends State<DetailPage> {
 
   Future<bool> loadProdukFromCache() async {
     final prefs = await SharedPreferences.getInstance();
-    final String? produkJson = prefs.getString('produk_detail_${widget.idProduk}');
+    final String? produkJson =
+        prefs.getString('produk_detail_${widget.idProduk}');
     if (produkJson != null) {
       try {
         final Map<String, dynamic> data = json.decode(produkJson);
@@ -81,7 +84,6 @@ class _DetailPageState extends State<DetailPage> {
         final data = json.decode(response.body);
         final produkData = Map<String, dynamic>.from(data["data"] ?? {});
         if (produkData.isNotEmpty) {
-          // Simpan ke SharedPreferences
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString(
               'produk_detail_${widget.idProduk}', json.encode(produkData));
@@ -173,7 +175,9 @@ class _DetailPageState extends State<DetailPage> {
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(resData["message"] ?? 'Gagal melakukan pembelian')),
+          SnackBar(
+              content:
+                  Text(resData["message"] ?? 'Gagal melakukan pembelian')),
         );
       }
     } catch (e) {
@@ -189,6 +193,8 @@ class _DetailPageState extends State<DetailPage> {
 
   @override
   Widget build(BuildContext context) {
+    final shareUrl = "https://xcreate.my.id?idproduk=${widget.idProduk}";
+
     return Scaffold(
       backgroundColor: Colors.grey.shade100,
       appBar: AppBar(
@@ -214,9 +220,29 @@ class _DetailPageState extends State<DetailPage> {
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.copy),
+            tooltip: "Copy Link",
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: shareUrl));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Link produk disalin!")),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.share),
+            tooltip: "Share Link",
+            onPressed: () {
+              Share.share(shareUrl, subject: produk?["nama_produk"] ?? "Produk");
+            },
+          ),
+        ],
       ),
       body: loadingInitial
-          ? const Center(child: CircularProgressIndicator(color: Colors.purple))
+          ? const Center(
+              child: CircularProgressIndicator(color: Colors.purple))
           : produk == null
               ? const Center(child: Text("Data produk tidak ditemukan"))
               : SafeArea(
@@ -232,7 +258,8 @@ class _DetailPageState extends State<DetailPage> {
                           height: 250,
                           width: double.infinity,
                           fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) => Container(
+                          errorBuilder: (context, error, stackTrace) =>
+                              Container(
                             height: 250,
                             color: Colors.grey.shade300,
                             child: const Icon(
@@ -281,7 +308,8 @@ class _DetailPageState extends State<DetailPage> {
                               ),
                               const SizedBox(height: 10),
                               Text(
-                                formatRupiah(int.parse(produk!["harga_produk"].toString())),
+                                formatRupiah(int.parse(
+                                    produk!["harga_produk"].toString())),
                                 style: const TextStyle(
                                   fontSize: 24,
                                   fontWeight: FontWeight.w700,
@@ -291,7 +319,8 @@ class _DetailPageState extends State<DetailPage> {
                               const SizedBox(height: 16),
                               Row(
                                 children: [
-                                  const Icon(Icons.category, color: Colors.grey),
+                                  const Icon(Icons.category,
+                                      color: Colors.grey),
                                   const SizedBox(width: 8),
                                   Text(
                                     produk!["kategori_produk"],
@@ -325,17 +354,19 @@ class _DetailPageState extends State<DetailPage> {
                         ),
                       ),
                       Container(
-                        padding:
-                            const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 12),
                         color: Colors.white,
                         child: Row(
                           children: [
                             Expanded(
                               child: ElevatedButton.icon(
-                                icon: const Icon(Icons.remove_red_eye, color: Colors.white),
+                                icon: const Icon(Icons.remove_red_eye,
+                                    color: Colors.white),
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: Colors.deepPurple,
-                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 14),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(12),
                                   ),
@@ -347,13 +378,15 @@ class _DetailPageState extends State<DetailPage> {
                                   Navigator.push(
                                     context,
                                     MaterialPageRoute(
-                                      builder: (_) => PreviewPage(htmlContent: kodeHtml),
+                                      builder: (_) =>
+                                          PreviewPage(htmlContent: kodeHtml),
                                     ),
                                   );
                                 },
                                 label: const Text(
                                   "Preview HTML",
-                                  style: TextStyle(fontSize: 16, color: Colors.white),
+                                  style: TextStyle(
+                                      fontSize: 16, color: Colors.white),
                                 ),
                               ),
                             ),
@@ -369,10 +402,12 @@ class _DetailPageState extends State<DetailPage> {
                                           strokeWidth: 2,
                                         ),
                                       )
-                                    : const Icon(Icons.shopping_cart, color: Colors.white),
+                                    : const Icon(Icons.shopping_cart,
+                                        color: Colors.white),
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: Colors.purple,
-                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 14),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(12),
                                   ),
@@ -381,9 +416,11 @@ class _DetailPageState extends State<DetailPage> {
                                 ),
                                 onPressed: processingBeli ? null : beliProduk,
                                 label: Text(
-                                  processingBeli ? "Memproses..." : "Beli Sekarang",
-                                  style:
-                                      const TextStyle(fontSize: 16, color: Colors.white),
+                                  processingBeli
+                                      ? "Memproses..."
+                                      : "Beli Sekarang",
+                                  style: const TextStyle(
+                                      fontSize: 16, color: Colors.white),
                                 ),
                               ),
                             ),

@@ -5,6 +5,7 @@ import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:http/http.dart' as http;
+import 'package:app_links/app_links.dart';
 
 // Halaman-halaman
 import 'auth/login.dart';
@@ -126,7 +127,7 @@ class MyApp extends StatelessWidget {
           elevation: 0,
         ),
       ),
-      home: CustomSplashPage(nextPage: initialPage),
+      home: DeepLinkWrapper(initialPage: initialPage),
       routes: {
         '/main': (context) => const MainPage(),
         '/dashboard': (context) => const DashboardPembayaranPage(),
@@ -143,6 +144,60 @@ class MyApp extends StatelessWidget {
         '/koneksi_midtrans': (context) => KoneksiMidtransPage(),
       },
     );
+  }
+}
+
+/// Wrapper untuk handle deep link
+class DeepLinkWrapper extends StatefulWidget {
+  final Widget initialPage;
+  const DeepLinkWrapper({super.key, required this.initialPage});
+
+  @override
+  State<DeepLinkWrapper> createState() => _DeepLinkWrapperState();
+}
+
+class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
+  late final AppLinks _appLinks;
+
+  @override
+  void initState() {
+    super.initState();
+    _appLinks = AppLinks();
+
+    // Cek saat app dibuka dari link
+    _initUri();
+
+    // Listen jika app sudah jalan lalu dapat link
+    _appLinks.uriLinkStream.listen((uri) {
+      if (uri != null) {
+        _handleLink(uri);
+      }
+    });
+  }
+
+  Future<void> _initUri() async {
+    final uri = await _appLinks.getInitialLink();
+    if (uri != null) {
+      _handleLink(uri);
+    }
+  }
+
+  void _handleLink(Uri uri) {
+    if (uri.host == "xcreate.my.id") {
+      final idProduk = uri.queryParameters['idproduk'];
+      if (idProduk != null) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => DetailPage(idProduk: idProduk),
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomSplashPage(nextPage: widget.initialPage);
   }
 }
 
@@ -187,6 +242,27 @@ class _CustomSplashPageState extends State<CustomSplashPage> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Detail Page
+class DetailPage extends StatefulWidget {
+  final dynamic idProduk;
+  const DetailPage({super.key, required this.idProduk});
+
+  @override
+  State<DetailPage> createState() => _DetailPageState();
+}
+
+class _DetailPageState extends State<DetailPage> {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text("Detail Produk ${widget.idProduk}")),
+      body: Center(
+        child: Text("Menampilkan detail produk dengan ID: ${widget.idProduk}"),
       ),
     );
   }
