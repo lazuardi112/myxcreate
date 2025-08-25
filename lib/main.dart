@@ -169,10 +169,8 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
 
     // Listen jika app sudah jalan lalu dapat link
     _appLinks.uriLinkStream.listen((uri) {
-      if (uri != null) {
-        _handleLink(uri);
-      }
-    });
+      _handleLink(uri);
+        });
   }
 
   Future<void> _initUri() async {
