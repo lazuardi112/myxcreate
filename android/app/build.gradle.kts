@@ -28,33 +28,33 @@ android {
         multiDexEnabled = true
     }
 
+    // ✅ Kotlin DSL harus pakai create()
     signingConfigs {
-        release {
-            // Sesuaikan dengan lokasi & password keystore kamu
-            storeFile file("my-release-key.jks")
-            storePassword "ardigg12"
-            keyAlias "myalias"
-            keyPassword "ardigg12"
+        create("release") {
+            storeFile = file("my-release-key.jks")  // lokasi file jks
+            storePassword = "ardigg12"              // password keystore
+            keyAlias = "myalias"                    // alias
+            keyPassword = "ardigg12"                // password alias
         }
     }
 
     buildTypes {
-        release {
-            signingConfig = signingConfigs.release
-            minifyEnabled true
-            shrinkResources true
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
         }
-        debug {
-            signingConfig = signingConfigs.debug
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
     lint {
-        abortOnError false
+        abortOnError = false
     }
 }
 
