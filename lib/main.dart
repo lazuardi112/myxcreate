@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
+import 'package:myxcreate/store/detail.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:http/http.dart' as http;
@@ -21,17 +23,28 @@ import 'menu_fitur/pembayaran_service.dart';
 import 'menu_fitur/upload_produk.dart';
 import 'store/store.dart';
 import 'xcode_edit/xcodeedit.dart';
+import 'web.dart';
 
 /// API Cek Versi
 const String apiUrl = "https://api.xcreate.my.id/myxcreate/cek_update_apk.php";
 
+/// Global navigator key agar bisa navigasi dari mana saja
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
 Future<void> main() async {
   WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
 
-  // Tahan splash bawaan FlutterNativeSplash
+  if (kIsWeb) {
+    runApp(const MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: WebPage(),
+    ));
+    return;
+  }
+
+  // Splash bawaan flutter_native_splash
   FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
 
-  // Tentukan halaman awal
   Widget initialPage = const LoginPage();
   try {
     initialPage = await _checkLoginAndVersion();
@@ -39,14 +52,12 @@ Future<void> main() async {
     debugPrint('❌ Error saat inisialisasi: $e\n$stack');
   }
 
-  // Jalankan aplikasi
   runApp(MyApp(initialPage: initialPage));
 
-  // Hapus splash bawaan
   FlutterNativeSplash.remove();
 }
 
-/// Cek Login + Versi
+/// Cek login & versi
 Future<Widget> _checkLoginAndVersion() async {
   final prefs = await SharedPreferences.getInstance();
   final packageInfo = await PackageInfo.fromPlatform();
@@ -116,6 +127,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: "MyXCreate",
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
@@ -158,25 +170,26 @@ class DeepLinkWrapper extends StatefulWidget {
 
 class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
   late final AppLinks _appLinks;
+  Uri? _pendingUri; // simpan URI yang masuk pertama kali
 
   @override
   void initState() {
     super.initState();
     _appLinks = AppLinks();
 
-    // Cek saat app dibuka dari link
     _initUri();
 
-    // Listen jika app sudah jalan lalu dapat link
     _appLinks.uriLinkStream.listen((uri) {
       _handleLink(uri);
-        });
+    });
   }
 
   Future<void> _initUri() async {
     final uri = await _appLinks.getInitialLink();
     if (uri != null) {
-      _handleLink(uri);
+      setState(() {
+        _pendingUri = uri;
+      });
     }
   }
 
@@ -184,10 +197,13 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
     if (uri.host == "xcreate.my.id") {
       final idProduk = uri.queryParameters['idproduk'];
       if (idProduk != null) {
-        Navigator.of(context).push(
+        navigatorKey.currentState?.pushAndRemoveUntil(
           MaterialPageRoute(
-            builder: (_) => DetailPage(idProduk: idProduk),
+            builder: (_) => DetailPage(
+              idProduk: idProduk,
+            ),
           ),
+          (route) => false,
         );
       }
     }
@@ -195,6 +211,15 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
 
   @override
   Widget build(BuildContext context) {
+    // jika ada deep link masuk pertama kali → langsung ke DetailPage
+    if (_pendingUri != null && _pendingUri!.host == "xcreate.my.id") {
+      final idProduk = _pendingUri!.queryParameters['idproduk'];
+      if (idProduk != null) {
+        return DetailPage(idProduk: idProduk);
+      }
+    }
+
+    // jika tidak ada deep link → lanjut ke splash normal
     return CustomSplashPage(nextPage: widget.initialPage);
   }
 }
@@ -212,7 +237,6 @@ class _CustomSplashPageState extends State<CustomSplashPage> {
   @override
   void initState() {
     super.initState();
-    // Tampilkan splash kustom selama 2 detik
     Timer(const Duration(seconds: 2), () {
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => widget.nextPage),
@@ -240,27 +264,6 @@ class _CustomSplashPageState extends State<CustomSplashPage> {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-/// Detail Page
-class DetailPage extends StatefulWidget {
-  final dynamic idProduk;
-  const DetailPage({super.key, required this.idProduk});
-
-  @override
-  State<DetailPage> createState() => _DetailPageState();
-}
-
-class _DetailPageState extends State<DetailPage> {
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text("Detail Produk ${widget.idProduk}")),
-      body: Center(
-        child: Text("Menampilkan detail produk dengan ID: ${widget.idProduk}"),
       ),
     );
   }

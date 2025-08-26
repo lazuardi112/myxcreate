@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter/services.dart'; // Clipboard
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'preview.dart'; // import PreviewPage
 
@@ -71,15 +72,25 @@ class _LihatCodePageState extends State<LihatCodePage> {
     );
   }
 
-  void openPreview() {
-    if (kodeHtml.isNotEmpty && errorMessage == null) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => PreviewPage(htmlContent: kodeHtml),
-        ),
-      );
-    }
+  /// Ganti shortcode sebelum preview
+  Future<void> openPreview() async {
+    if (kodeHtml.isEmpty || errorMessage != null) return;
+
+    final prefs = await SharedPreferences.getInstance();
+
+    final temaWarna = prefs.getString('pengaturan_kode_warna') ?? "";
+    final openApi = prefs.getString('pengaturan_open_api') ?? "";
+
+    String processedHtml = kodeHtml
+        .replaceAll("{{tema_warna}}", temaWarna)
+        .replaceAll("{{openapi}}", openApi);
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => PreviewPage(htmlContent: processedHtml),
+      ),
+    );
   }
 
   @override

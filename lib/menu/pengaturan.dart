@@ -15,6 +15,7 @@ class PengaturanPage extends StatefulWidget {
 
 class _PengaturanPageState extends State<PengaturanPage> {
   final TextEditingController apiKeyController = TextEditingController();
+  final TextEditingController openApiKeyController = TextEditingController(); // Tambahan Open API
   final TextEditingController urlApkController = TextEditingController();
   final TextEditingController kodeWarnaController = TextEditingController();
   final TextEditingController namaTokoController = TextEditingController();
@@ -39,34 +40,32 @@ class _PengaturanPageState extends State<PengaturanPage> {
   Future<void> _showErrorDialog(String pesan) async {
     return showDialog(
       context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Row(
-            children: const [
-              Icon(Icons.error_outline, color: Colors.red),
-              SizedBox(width: 8),
-              Text("Kesalahan"),
-            ],
-          ),
-          content: Text(
-            pesan,
-            style: const TextStyle(fontSize: 16),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text("Tutup"),
-            ),
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: const [
+            Icon(Icons.error_outline, color: Colors.red),
+            SizedBox(width: 8),
+            Text("Kesalahan"),
           ],
-        );
-      },
+        ),
+        content: Text(
+          pesan,
+          style: const TextStyle(fontSize: 16),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text("Tutup"),
+          ),
+        ],
+      ),
     );
   }
 
-  /// Ambil data dari lokal dulu supaya cepat tampil
+  /// Ambil data dari lokal dulu, jika tidak ada ambil dari API
   Future<void> _loadLocalData() async {
+    setState(() => loading = true);
     final prefs = await SharedPreferences.getInstance();
     username = prefs.getString('username');
 
@@ -78,15 +77,22 @@ class _PengaturanPageState extends State<PengaturanPage> {
 
     // Load data pengaturan dari lokal
     apiKeyController.text = prefs.getString('pengaturan_apikey') ?? "";
+    openApiKeyController.text = prefs.getString('pengaturan_open_api') ?? ""; // Ambil Open API
     urlApkController.text = prefs.getString('pengaturan_url_apk') ?? "";
     kodeWarnaController.text = prefs.getString('pengaturan_kode_warna') ?? "";
     namaTokoController.text = prefs.getString('pengaturan_nama_toko') ?? "";
 
     setState(() => loading = false);
 
-    // Setelah tampilkan dari lokal, cek versi update & sync data terbaru
+    // Jika ada yang kosong, ambil dari API
+    if (apiKeyController.text.isEmpty ||
+        urlApkController.text.isEmpty ||
+        openApiKeyController.text.isEmpty) {
+      await fetchPengaturan();
+    }
+
+    // Cek versi update
     await checkForUpdate();
-    await fetchPengaturan();
   }
 
   /// Ambil pengaturan terbaru dari API
@@ -104,15 +110,15 @@ class _PengaturanPageState extends State<PengaturanPage> {
           // Simpan ke lokal
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('pengaturan_apikey', data['apikey'] ?? "");
+          await prefs.setString('pengaturan_open_api', data['open_api'] ?? ""); // Simpan Open API
           await prefs.setString('pengaturan_url_apk', data['url_apk'] ?? "");
-          await prefs.setString(
-              'pengaturan_kode_warna', data['kode_warna'] ?? "");
-          await prefs.setString(
-              'pengaturan_nama_toko', data['nama_toko'] ?? "");
+          await prefs.setString('pengaturan_kode_warna', data['kode_warna'] ?? "");
+          await prefs.setString('pengaturan_nama_toko', data['nama_toko'] ?? "");
 
           // Update UI
           setState(() {
             apiKeyController.text = data['apikey'] ?? "";
+            openApiKeyController.text = data['open_api'] ?? ""; // Update Open API
             urlApkController.text = data['url_apk'] ?? "";
             kodeWarnaController.text = data['kode_warna'] ?? "";
             namaTokoController.text = data['nama_toko'] ?? "";
@@ -142,6 +148,7 @@ class _PengaturanPageState extends State<PengaturanPage> {
         body: {
           "username": username ?? "",
           "apikey": apiKeyController.text.trim(),
+          "open_api": openApiKeyController.text.trim(), // Tambahan Open API
           "url_apk": urlApkController.text.trim(),
           "kode_warna": kodeWarnaController.text.trim(),
           "nama_toko": namaTokoController.text.trim(),
@@ -152,16 +159,12 @@ class _PengaturanPageState extends State<PengaturanPage> {
         final res = jsonDecode(response.body);
 
         if (res['status'] == 'success') {
-          // Simpan ke lokal
           final prefs = await SharedPreferences.getInstance();
-          await prefs.setString(
-              'pengaturan_apikey', apiKeyController.text.trim());
-          await prefs.setString(
-              'pengaturan_url_apk', urlApkController.text.trim());
-          await prefs.setString(
-              'pengaturan_kode_warna', kodeWarnaController.text.trim());
-          await prefs.setString(
-              'pengaturan_nama_toko', namaTokoController.text.trim());
+          await prefs.setString('pengaturan_apikey', apiKeyController.text.trim());
+          await prefs.setString('pengaturan_open_api', openApiKeyController.text.trim());
+          await prefs.setString('pengaturan_url_apk', urlApkController.text.trim());
+          await prefs.setString('pengaturan_kode_warna', kodeWarnaController.text.trim());
+          await prefs.setString('pengaturan_nama_toko', namaTokoController.text.trim());
 
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -196,17 +199,12 @@ class _PengaturanPageState extends State<PengaturanPage> {
         latestVersion = data['versi']?.toString() ?? "";
         changelog = data['changelog']?.toString() ?? "";
         tanggalUpdate = data['tanggalUpdate']?.toString() ??
-            data['tanggal_update']?.toString() ??
-            "";
-        downloadUrl = data['url_apk']?.toString() ??
-            data['url_download']?.toString() ??
-            "";
+            data['tanggal_update']?.toString() ?? "";
+        downloadUrl = data['url_apk']?.toString() ?? data['url_download']?.toString() ?? "";
 
         if (latestVersion.isNotEmpty &&
             _isVersionLower(localVersion, latestVersion)) {
-          setState(() {
-            adaUpdate = true;
-          });
+          setState(() => adaUpdate = true);
         }
       }
     } catch (e) {
@@ -218,12 +216,8 @@ class _PengaturanPageState extends State<PengaturanPage> {
     List<int> currParts = current.split('.').map(int.parse).toList();
     List<int> latestParts = latest.split('.').map(int.parse).toList();
 
-    while (currParts.length < latestParts.length) {
-      currParts.add(0);
-    }
-    while (latestParts.length < currParts.length) {
-      latestParts.add(0);
-    }
+    while (currParts.length < latestParts.length) currParts.add(0);
+    while (latestParts.length < currParts.length) latestParts.add(0);
 
     for (int i = 0; i < latestParts.length; i++) {
       if (currParts[i] < latestParts[i]) return true;
@@ -286,6 +280,14 @@ class _PengaturanPageState extends State<PengaturanPage> {
                               ),
                               const SizedBox(height: 12),
                               TextField(
+                                controller: openApiKeyController,
+                                decoration: const InputDecoration(
+                                  labelText: "Open API Key",
+                                  border: OutlineInputBorder(),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              TextField(
                                 controller: urlApkController,
                                 decoration: const InputDecoration(
                                   labelText: "URL Website Bukaolshop",
@@ -315,8 +317,7 @@ class _PengaturanPageState extends State<PengaturanPage> {
                                   onPressed: saving ? null : simpanPengaturan,
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: Colors.deepPurple,
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 14),
+                                    padding: const EdgeInsets.symmetric(vertical: 14),
                                   ),
                                   icon: saving
                                       ? const SizedBox(
@@ -327,12 +328,9 @@ class _PengaturanPageState extends State<PengaturanPage> {
                                             color: Colors.white,
                                           ),
                                         )
-                                      : const Icon(Icons.save,
-                                          color: Colors.white),
+                                      : const Icon(Icons.save, color: Colors.white),
                                   label: Text(
-                                    saving
-                                        ? "Menyimpan..."
-                                        : "Simpan Perubahan",
+                                    saving ? "Menyimpan..." : "Simpan Perubahan",
                                     style: const TextStyle(color: Colors.white),
                                   ),
                                 ),
@@ -353,8 +351,7 @@ class _PengaturanPageState extends State<PengaturanPage> {
                             children: [
                               if (adaUpdate)
                                 Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 6, vertical: 2),
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                   decoration: BoxDecoration(
                                     color: Colors.red,
                                     borderRadius: BorderRadius.circular(12),
