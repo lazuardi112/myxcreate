@@ -1,10 +1,53 @@
-# Buat folder jika belum ada
-- name: Prepare artifact folder
-  run: mkdir -p build/app/outputs/flutter-apk/
+name: Build & Publish Release APK
 
-# Upload semua APK
-- name: Upload APK artifact
-  uses: actions/upload-artifact@v4
-  with:
-    name: release-apk
-    path: build/app/outputs/flutter-apk/*.apk
+on:
+  push:
+    branches:
+      - main
+  release:
+    types: [published]  # Otomatis jalan saat release dibuat
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout repository
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Setup Java
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      # Setup Flutter versi 3.32.8
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.32.8"
+
+      # Install dependencies
+      - name: Install dependencies
+        run: flutter pub get
+
+      # Build APK release
+      - name: Build release APK
+        run: flutter build apk --release
+
+      # Pastikan folder build ada dan tampilkan file APK
+      - name: Show APK files
+        run: |
+          mkdir -p build/app/outputs/flutter-apk/
+          ls -lah build/app/outputs/flutter-apk/
+
+      # Attach APK ke GitHub Release
+      - name: Upload APK to GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: build/app/outputs/flutter-apk/*.apk
+          token: ${{ secrets.GITHUB_TOKEN }}
+          overwrite: true
