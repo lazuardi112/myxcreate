@@ -15,8 +15,9 @@ class _AdPageState extends State<AdPage> {
   RewardedInterstitialAd? _rewardedInterstitialAd;
   bool _isAdLoaded = false;
   bool _isRewardEarned = false;
+  bool _isProcessing = false;
 
-  final String adUnitId = "ca-app-pub-8867411608399492/2698572028"; // Ganti dengan ID unit iklan Anda
+  final String adUnitId = "ca-app-pub-8867411608399492/2698572028"; // ID unit iklan Anda
 
   @override
   void initState() {
@@ -38,6 +39,10 @@ class _AdPageState extends State<AdPage> {
         },
         onAdFailedToLoad: (LoadAdError error) {
           _rewardedInterstitialAd = null;
+          setState(() {
+            _isAdLoaded = false;
+          });
+          _showMessage("Gagal memuat iklan: ${error.message}");
           Navigator.of(context).pop();
         },
       ),
@@ -46,6 +51,7 @@ class _AdPageState extends State<AdPage> {
 
   void _showAd() {
     if (_rewardedInterstitialAd == null) {
+      _showMessage("Iklan belum siap.");
       return;
     }
 
@@ -55,11 +61,14 @@ class _AdPageState extends State<AdPage> {
         ad.dispose();
         if (_isRewardEarned) {
           _updateUserExpirationDate();
+        } else {
+          _showMessage("Anda menutup iklan sebelum selesai.");
+          Navigator.of(context).pop();
         }
-        Navigator.of(context).pop();
       },
       onAdFailedToShowFullScreenContent: (RewardedInterstitialAd ad, AdError error) {
         ad.dispose();
+        _showMessage("Gagal menampilkan iklan: ${error.message}");
         Navigator.of(context).pop();
       },
     );
@@ -75,40 +84,63 @@ class _AdPageState extends State<AdPage> {
   }
 
   Future<void> _updateUserExpirationDate() async {
+    setState(() {
+      _isProcessing = true;
+    });
+
     final prefs = await SharedPreferences.getInstance();
-    final username = prefs.getString('username'); // Asumsikan username disimpan di SharedPreferences
+    final username = prefs.getString('username');
 
     if (username != null) {
-      final url = Uri.parse('https://api.xcreate.my.id/myxcreate/ads.php'); // Ganti dengan endpoint API Anda
+      final url = Uri.parse('https://api.xcreate.my.id/myxcreate/ads.php'); // Endpoint API Anda
       try {
         final response = await http.post(
           url,
           headers: {'Content-Type': 'application/json'},
           body: json.encode({
             'username': username,
-            'duration_in_days': 30, // Tambahkan 30 hari ke masa aktif
+            'duration_in_days': 30,
           }),
         );
         if (response.statusCode == 200) {
-          print("Masa aktif pengguna berhasil diperbarui.");
+          _showMessage("✅ Masa aktif Anda berhasil ditambah 30 hari!");
         } else {
-          print("Gagal memperbarui masa aktif. Kode: ${response.statusCode}");
+          _showMessage("❌ Gagal memperbarui masa aktif (Kode: ${response.statusCode}).");
         }
       } catch (e) {
-        print("Error saat memanggil API: $e");
+        _showMessage("Error saat memanggil API: $e");
       }
+    } else {
+      _showMessage("Username tidak ditemukan di penyimpanan lokal.");
     }
+
+    setState(() {
+      _isProcessing = false;
+    });
+
+    Navigator.of(context).pop();
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 3),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Center(
-        child: _isAdLoaded
+        child: _isProcessing
             ? const CircularProgressIndicator()
-            : const Text('Memuat iklan...'),
+            : !_isAdLoaded
+                ? const Text("Memuat iklan...")
+                : const Text("Iklan sedang ditampilkan..."),
       ),
     );
   }
 }
-
