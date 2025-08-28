@@ -1,6 +1,5 @@
 name: Build & Publish Release APK
 
-# Workflow jalan saat push ke main atau saat bikin Release
 on:
   push:
     branches:
@@ -14,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Checkout source code
+      # Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -25,13 +24,13 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      # Setup Flutter terbaru (>=3.13 untuk Dart 3.6+)
+      # Setup Flutter versi 3.32.8
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.22.0" # sesuaikan versi Flutter terbaru
+          flutter-version: "3.32.8"
 
-      # Pastikan dependencies terinstal
+      # Install dependencies
       - name: Install dependencies
         run: flutter pub get
 
