@@ -1,66 +1,50 @@
-name: Build & Release APK
+name: Build & Publish Release APK
 
 on:
   push:
     branches:
       - main
-  workflow_dispatch:
+  release:
+    types: [published]
+  workflow_dispatch:  # Bisa dijalankan manual
 
 jobs:
-  build-and-release:
+  build:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout repository
+      # Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Setup Java (untuk Gradle)
+      # Setup Java (untuk Gradle)
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      # 3. Setup Flutter versi 3.32.8
+      # Setup Flutter versi 3.32.8
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: "3.32.8"
 
-      # 4. Install dependencies
+      # Install dependencies
       - name: Install dependencies
         run: flutter pub get
 
-      # 5. Build release APK
+      # Build APK release
       - name: Build release APK
         run: flutter build apk --release
 
-      # 6. Cari file APK hasil build secara otomatis
-      - name: Find APK file
-        id: find_apk
-        run: |
-          APK_PATH=$(find . -type f -name "app-release.apk" | head -n 1)
-          if [ -z "$APK_PATH" ]; then
-            echo "APK file not found!"
-            exit 1
-          fi
-          echo "Found APK at $APK_PATH"
-          echo "APK_PATH=$APK_PATH" >> $GITHUB_ENV
+      # Buat folder artifact kalau belum ada
+      - name: Prepare artifact folder
+        run: mkdir -p build/app/outputs/flutter-apk/
 
-      # 7. Create a new GitHub Release (otomatis) dengan tag unik
-      - name: Create GitHub Release
-        id: create_release
-        uses: softprops/action-gh-release@v1
+      # Upload APK sebagai artifact
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: v${{ github.run_number }}-${{ github.sha }}
-          name: Release v${{ github.run_number }}-${{ github.sha }}
-          body: "Automated Flutter APK release #${{ github.run_number }}"
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      # 8. Upload APK ke Release
-      - name: Upload APK to Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: ${{ env.APK_PATH }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          name: release-apk
+          path: build/app/outputs/flutter-apk/*.apk
