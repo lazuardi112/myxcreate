@@ -22,7 +22,7 @@ android {
     defaultConfig {
         applicationId = "com.example.myxcreate"
 
-        // ✅ Wajib minSdk 23 agar google_mobile_ads tidak error
+        // ✅ fix minSdk agar cocok google_mobile_ads
         minSdk = 23
         targetSdk = flutter.targetSdkVersion
 
@@ -39,12 +39,7 @@ android {
             keyAlias = "myalias"                     // alias
             keyPassword = "ardigg12"                 // password alias
         }
-        create("debug") {
-            storeFile = file("debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
-        }
+        // ❌ jangan buat debug di sini, sudah otomatis dari Flutter
     }
 
     buildTypes {
@@ -58,7 +53,7 @@ android {
             )
         }
         getByName("debug") {
-            signingConfig = signingConfigs.getByName("debug")
+            // otomatis pakai debug keystore bawaan
             isMinifyEnabled = false
         }
     }
