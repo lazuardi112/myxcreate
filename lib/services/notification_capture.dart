@@ -1,4 +1,3 @@
-// lib/services/notification_capture.dart
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
@@ -9,38 +8,27 @@ import 'package:installed_apps/installed_apps.dart';
 import 'package:installed_apps/app_info.dart';
 import 'package:http/http.dart' as http;
 
-/// Service untuk menangkap notifikasi, menyimpan ke SharedPreferences,
-/// dan POST ke webhook jika diatur.
 class NotifService {
   static const _keySelectedPkgs = 'selected_packages';
   static const _keyCaptured = 'captured_notifs';
   static const _keyWebhook = 'notif_webhook_url';
 
-  /// Pastikan service + listener berjalan
   static Future<void> ensureStarted() async {
-    if (kIsWeb) return; // hanya Android
+    if (kIsWeb) return;
 
-    // init communication port (opsional)
-    try {
-      FlutterForegroundTask.initCommunicationPort();
-    } catch (_) {}
-
-    // Inisialisasi opsi foreground task
+    FlutterForegroundTask.initCommunicationPort();
     FlutterForegroundTask.init(
       androidNotificationOptions: AndroidNotificationOptions(
         channelId: 'fg_channel',
         channelName: 'Background Service',
-        channelDescription: 'Service menangkap notifikasi',
+        channelDescription: 'Menangkap notifikasi',
+        onlyAlertOnce: true,
         channelImportance: NotificationChannelImportance.LOW,
         priority: NotificationPriority.LOW,
-        onlyAlertOnce: true,
       ),
-      iosNotificationOptions: IOSNotificationOptions(
-        showNotification: false,
-        playSound: false,
-      ),
+      iosNotificationOptions: IOSNotificationOptions(showNotification: false),
       foregroundTaskOptions: ForegroundTaskOptions(
-        eventAction: ForegroundTaskEventAction.repeat(15000), // 15 detik
+        eventAction: ForegroundTaskEventAction.repeat(15000),
         autoRunOnBoot: true,
         autoRunOnMyPackageReplaced: true,
         allowWakeLock: true,
@@ -48,7 +36,6 @@ class NotifService {
       ),
     );
 
-    // Start service kalau belum jalan
     if (!await FlutterForegroundTask.isRunningService) {
       await FlutterForegroundTask.startService(
         serviceId: 7,
@@ -58,67 +45,49 @@ class NotifService {
       );
     }
 
-    // Pastikan izin akses notifikasi
     final granted = await NotificationListenerService.isPermissionGranted();
-    if (!granted) {
-      await NotificationListenerService.requestPermission();
-    }
+    if (!granted) await NotificationListenerService.requestPermission();
 
-    // Daftarkan listener notifikasi
     NotificationListenerService.notificationsStream.listen(_onNotification);
   }
 
-  /// Callback entry-point untuk foreground task
   @pragma('vm:entry-point')
   static void _startCallback() {
     FlutterForegroundTask.setTaskHandler(_FgHandler());
   }
 
-  /// Handler notifikasi masuk
   static Future<void> _onNotification(ServiceNotificationEvent e) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final selected = prefs.getStringList(_keySelectedPkgs) ?? [];
 
       final pkg = e.packageName ?? 'unknown';
-      final title = e.title ?? '';
-      final content = e.content ?? '';
-
       if (!selected.contains(pkg)) return;
 
-      final rec = <String, dynamic>{
+      final rec = {
         'package': pkg,
-        'appName': '', // UI nanti yang resolve nama app
-        'title': title,
-        'content': content,
+        'appName': '',
+        'title': e.title ?? '',
+        'content': e.content ?? '',
         'timestamp': DateTime.now().toIso8601String(),
       };
 
-      // simpan ke SharedPreferences
       final list = prefs.getStringList(_keyCaptured) ?? [];
       list.insert(0, jsonEncode(rec));
       if (list.length > 500) list.removeRange(500, list.length);
       await prefs.setStringList(_keyCaptured, list);
 
-      // POST ke webhook jika diatur
       final webhook = prefs.getString(_keyWebhook);
       if (webhook != null && webhook.isNotEmpty) {
         try {
-          await http.post(
-            Uri.parse(webhook),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode(rec),
-          );
-        } catch (err) {
-          debugPrint('NotifService webhook error: $err');
-        }
+          await http.post(Uri.parse(webhook),
+              headers: {'Content-Type': 'application/json'}, body: jsonEncode(rec));
+        } catch (_) {}
       }
     } catch (err, st) {
       debugPrint('NotifService._onNotification error: $err\n$st');
     }
   }
-
-  // === Public helper ===
 
   static Future<List<AppInfo>> getInstalledApps() async {
     final apps = await InstalledApps.getInstalledApps(false, true);
@@ -134,11 +103,7 @@ class NotifService {
   static Future<void> togglePackage(String pkg) async {
     final prefs = await SharedPreferences.getInstance();
     final list = prefs.getStringList(_keySelectedPkgs) ?? [];
-    if (list.contains(pkg)) {
-      list.remove(pkg);
-    } else {
-      list.add(pkg);
-    }
+    if (list.contains(pkg)) list.remove(pkg); else list.add(pkg);
     await prefs.setStringList(_keySelectedPkgs, list);
   }
 
@@ -160,43 +125,28 @@ class NotifService {
 
   static Future<void> setWebhook(String? url) async {
     final prefs = await SharedPreferences.getInstance();
-    if (url == null || url.isEmpty) {
-      await prefs.remove(_keyWebhook);
-    } else {
-      await prefs.setString(_keyWebhook, url);
-    }
+    if (url == null || url.isEmpty) await prefs.remove(_keyWebhook); else await prefs.setString(_keyWebhook, url);
+  }
+
+  static Future<void> removeCapturedAt(int index) async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList(_keyCaptured) ?? [];
+    if (index >= 0 && index < list.length) list.removeAt(index);
+    await prefs.setStringList(_keyCaptured, list);
   }
 }
 
-/// Foreground Task Handler
 class _FgHandler extends TaskHandler {
   @override
-  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
-    debugPrint('ForegroundTask started at $timestamp');
-  }
-
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {}
   @override
-  void onRepeatEvent(DateTime timestamp) {
-    debugPrint('ForegroundTask repeat event: $timestamp');
-  }
-
+  void onRepeatEvent(DateTime timestamp) {}
   @override
-  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
-    debugPrint('ForegroundTask destroyed');
-  }
-
+  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {}
   @override
-  void onReceiveData(Object data) {
-    debugPrint('ForegroundTask received data: $data');
-  }
-
+  void onReceiveData(Object data) {}
   @override
-  void onNotificationButtonPressed(String id) {
-    debugPrint('Notification button pressed: $id');
-  }
-
+  void onNotificationButtonPressed(String id) {}
   @override
-  void onNotificationPressed() {
-    debugPrint('Notification pressed');
-  }
+  void onNotificationPressed() {}
 }

@@ -1,7 +1,6 @@
-// lib/pages/user_notif.dart
 import 'package:flutter/material.dart';
+import 'package:installed_apps/installed_apps.dart';
 import 'package:installed_apps/app_info.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../services/notification_capture.dart';
 
 class UserNotifPage extends StatefulWidget {
@@ -11,8 +10,7 @@ class UserNotifPage extends StatefulWidget {
   State<UserNotifPage> createState() => _UserNotifPageState();
 }
 
-class _UserNotifPageState extends State<UserNotifPage>
-    with SingleTickerProviderStateMixin {
+class _UserNotifPageState extends State<UserNotifPage> with SingleTickerProviderStateMixin {
   late TabController _tab;
   List<AppInfo> _apps = [];
   List<AppInfo> _filteredApps = [];
@@ -40,19 +38,16 @@ class _UserNotifPageState extends State<UserNotifPage>
     final captured = await NotifService.getCaptured();
     final webhook = await NotifService.getWebhook() ?? '';
 
-    final Map<String, String> appMap = {for (var a in apps) a.packageName: a.name};
-
+    final Map<String, String> appMap = {for (final a in apps) a.packageName: a.name};
     final enriched = captured.map((m) {
       final pkg = m['package']?.toString() ?? '';
       final enrichedMap = Map<String, dynamic>.from(m);
-      enrichedMap['appName'] = (m['appName']?.toString().isNotEmpty ?? false)
-          ? m['appName']
-          : (appMap[pkg] ?? pkg);
+      enrichedMap['appName'] = (m['appName']?.toString().isNotEmpty ?? false) ? m['appName'] : (appMap[pkg] ?? pkg);
       return enrichedMap;
     }).toList();
 
     setState(() {
-      _apps = apps..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      _apps = apps;
       _filteredApps = _apps;
       _selectedPkgs = selected;
       _captured = enriched;
@@ -64,9 +59,7 @@ class _UserNotifPageState extends State<UserNotifPage>
   void _applySearch() {
     final q = _searchCtrl.text.toLowerCase();
     setState(() {
-      _filteredApps = q.isEmpty
-          ? _apps
-          : _apps.where((a) => a.name.toLowerCase().contains(q)).toList();
+      _filteredApps = q.isEmpty ? _apps : _apps.where((a) => a.name.toLowerCase().contains(q)).toList();
     });
   }
 
@@ -78,13 +71,11 @@ class _UserNotifPageState extends State<UserNotifPage>
 
   Future<void> _refreshCaptured() async {
     final data = await NotifService.getCaptured();
-    final Map<String, String> appMap = {for (var a in _apps) a.packageName: a.name};
+    final Map<String, String> appMap = {for (final a in _apps) a.packageName: a.name};
     final enriched = data.map((m) {
       final pkg = m['package']?.toString() ?? '';
       final enrichedMap = Map<String, dynamic>.from(m);
-      enrichedMap['appName'] = (m['appName']?.toString().isNotEmpty ?? false)
-          ? m['appName']
-          : (appMap[pkg] ?? pkg);
+      enrichedMap['appName'] = (m['appName']?.toString().isNotEmpty ?? false) ? m['appName'] : (appMap[pkg] ?? pkg);
       return enrichedMap;
     }).toList();
 
@@ -92,12 +83,7 @@ class _UserNotifPageState extends State<UserNotifPage>
   }
 
   Future<void> _deleteCapturedAt(int index) async {
-    final prefs = await SharedPreferences.getInstance();
-    final list = prefs.getStringList('captured_notifs') ?? [];
-    if (index >= 0 && index < list.length) {
-      list.removeAt(index);
-      await prefs.setStringList('captured_notifs', list);
-    }
+    await NotifService.removeCapturedAt(index);
     await _refreshCaptured();
   }
 
@@ -111,43 +97,26 @@ class _UserNotifPageState extends State<UserNotifPage>
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context).copyWith(
-      colorScheme: Theme.of(context).colorScheme.copyWith(
-            primary: Colors.deepPurple,
-            secondary: Colors.deepPurple.shade200,
-          ),
-    );
-
-    return Theme(
-      data: theme,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Notifikasi Aplikasi'),
-          bottom: TabBar(
-            controller: _tab,
-            tabs: const [
-              Tab(icon: Icon(Icons.tune, color: Colors.white), text: 'Pilih Aplikasi'),
-              Tab(icon: Icon(Icons.notifications, color: Colors.white), text: 'Notifikasi Masuk'),
-            ],
-          ),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.refresh, color: Colors.white),
-              onPressed: _loadAll,
-              tooltip: 'Reload',
-            )
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Notifikasi Aplikasi'),
+        bottom: TabBar(
+          controller: _tab,
+          tabs: const [
+            Tab(icon: Icon(Icons.tune), text: 'Pilih Aplikasi'),
+            Tab(icon: Icon(Icons.notifications), text: 'Notifikasi Masuk'),
           ],
         ),
-        body: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : TabBarView(
-                controller: _tab,
-                children: [
-                  _buildFilterTab(),
-                  _buildCapturedTab(),
-                ],
-              ),
+        actions: [
+          IconButton(icon: const Icon(Icons.refresh), onPressed: _loadAll),
+        ],
       ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : TabBarView(
+              controller: _tab,
+              children: [_buildFilterTab(), _buildCapturedTab()],
+            ),
     );
   }
 
@@ -155,36 +124,20 @@ class _UserNotifPageState extends State<UserNotifPage>
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          padding: const EdgeInsets.all(12),
           child: Row(
             children: [
-              const Icon(Icons.link, color: Colors.deepPurple),
-              const SizedBox(width: 12),
               Expanded(
                 child: TextField(
                   controller: _webhookCtrl,
-                  decoration: InputDecoration(
-                    labelText: 'Webhook URL',
-                    hintText: 'https://server-anda/receive',
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
+                  decoration: InputDecoration(labelText: 'Webhook URL', border: OutlineInputBorder()),
                 ),
               ),
               const SizedBox(width: 8),
               ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.deepPurple,
-                  foregroundColor: Colors.white,
-                ),
                 onPressed: () async {
                   await NotifService.setWebhook(_webhookCtrl.text.trim());
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Webhook disimpan')),
-                    );
-                  }
+                  if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Webhook disimpan')));
                 },
                 child: const Text('Simpan'),
               )
@@ -192,42 +145,23 @@ class _UserNotifPageState extends State<UserNotifPage>
           ),
         ),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           child: TextField(
             controller: _searchCtrl,
-            decoration: InputDecoration(
-              prefixIcon: const Icon(Icons.search),
-              hintText: "Cari aplikasi...",
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
+            decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Cari aplikasi...', border: OutlineInputBorder()),
           ),
         ),
-        const Divider(height: 0),
         Expanded(
           child: ListView.builder(
             itemCount: _filteredApps.length,
-            itemBuilder: (ctx, i) {
+            itemBuilder: (_, i) {
               final a = _filteredApps[i];
-              final pkg = a.packageName;
-              final name = a.name;
-              final enabled = _selectedPkgs.contains(pkg);
-              return Card(
-                color: enabled ? Colors.deepPurple.shade50 : Colors.white,
-                margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                child: ListTile(
-                  leading: a.icon != null
-                      ? Image.memory(a.icon!, width: 36, height: 36)
-                      : const Icon(Icons.apps, color: Colors.deepPurple),
-                  title: Text(name),
-                  subtitle: Text(pkg, style: const TextStyle(fontSize: 12)),
-                  trailing: Switch(
-                    activeColor: Colors.deepPurple,
-                    value: enabled,
-                    onChanged: (_) => _toggle(pkg),
-                  ),
-                ),
+              final enabled = _selectedPkgs.contains(a.packageName);
+              return ListTile(
+                leading: a.icon != null ? Image.memory(a.icon!, width: 36, height: 36) : const Icon(Icons.apps),
+                title: Text(a.name),
+                subtitle: Text(a.packageName),
+                trailing: Switch(value: enabled, onChanged: (_) => _toggle(a.packageName)),
               );
             },
           ),
@@ -241,21 +175,16 @@ class _UserNotifPageState extends State<UserNotifPage>
       onRefresh: _refreshCaptured,
       child: _captured.isEmpty
           ? const Center(child: Text('Belum ada notifikasi ditangkap'))
-          : ListView.separated(
+          : ListView.builder(
               padding: const EdgeInsets.only(bottom: 16),
               itemCount: _captured.length + 1,
-              separatorBuilder: (_, __) => const Divider(height: 0),
               itemBuilder: (ctx, i) {
                 if (i == 0) {
                   return Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                    padding: const EdgeInsets.all(12),
                     child: Row(
                       children: [
                         ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.red.shade400,
-                            foregroundColor: Colors.white,
-                          ),
                           onPressed: () async {
                             await NotifService.clearCaptured();
                             await _refreshCaptured();
@@ -263,71 +192,34 @@ class _UserNotifPageState extends State<UserNotifPage>
                           icon: const Icon(Icons.delete_sweep),
                           label: const Text('Hapus semua'),
                         ),
-                        const SizedBox(width: 12),
-                        OutlinedButton.icon(
-                          onPressed: _refreshCaptured,
-                          icon: const Icon(Icons.refresh),
-                          label: const Text('Muat ulang'),
-                        )
+                        const SizedBox(width: 8),
+                        OutlinedButton.icon(onPressed: _refreshCaptured, icon: const Icon(Icons.refresh), label: const Text('Muat ulang')),
                       ],
                     ),
                   );
                 }
                 final n = _captured[i - 1];
-                return Card(
-                  margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  child: ListTile(
-                    leading: const Icon(Icons.notifications, color: Colors.deepPurple),
-                    title: Text(
-                      n['title']?.toString() ?? '',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                return ListTile(
+                  leading: const Icon(Icons.notifications),
+                  title: Text(n['title'] ?? ''),
+                  subtitle: Text('${n['appName'] ?? n['package']} • ${n['content'] ?? ''}'),
+                  trailing: IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => _deleteCapturedAt(i - 1)),
+                  onTap: () => showDialog(
+                    context: context,
+                    builder: (_) => AlertDialog(
+                      title: Text(n['title'] ?? 'Tanpa Judul'),
+                      content: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Aplikasi: ${n['appName'] ?? n['package']}'),
+                          Text('Package: ${n['package']}'),
+                          Text('Isi: ${n['content']}'),
+                          Text('Waktu: ${n['timestamp']}'),
+                        ],
+                      ),
+                      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Tutup'))],
                     ),
-                    subtitle: Text(
-                      '${n['appName'] ?? n['package']} • ${n['content'] ?? ''}',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: Wrap(
-                      spacing: 4,
-                      children: [
-                        Text(
-                          (n['timestamp'] ?? '').toString().split('T').first,
-                          style: const TextStyle(fontSize: 11, color: Colors.grey),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.delete, color: Colors.red, size: 20),
-                          onPressed: () => _deleteCapturedAt(i - 1),
-                        )
-                      ],
-                    ),
-                    onTap: () {
-                      showDialog(
-                        context: context,
-                        builder: (_) => AlertDialog(
-                          title: Text(n['title'] ?? 'Tanpa Judul'),
-                          content: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('Aplikasi: ${n['appName'] ?? n['package']}'),
-                              const SizedBox(height: 8),
-                              Text('Package: ${n['package']}'),
-                              const SizedBox(height: 8),
-                              Text('Isi: ${n['content']}'),
-                              const SizedBox(height: 8),
-                              Text('Waktu: ${n['timestamp']}'),
-                            ],
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(context),
-                              child: const Text('Tutup'),
-                            )
-                          ],
-                        ),
-                      );
-                    },
                   ),
                 );
               },
