@@ -28,16 +28,16 @@ import 'store/store.dart';
 import 'xcode_edit/xcodeedit.dart';
 
 const String apiUrl = "https://api.xcreate.my.id/myxcreate/cek_update_apk.php";
-
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Splash screen native
+  // Preserve splash screen sampai app siap
   FlutterNativeSplash.preserve(
-    widgetsBinding: WidgetsFlutterBinding.ensureInitialized(),
-  );
+      widgetsBinding: WidgetsFlutterBinding.ensureInitialized());
+
+  Widget initialPage = const LoginPage();
 
   if (kIsWeb) {
     runApp(const MaterialApp(
@@ -47,11 +47,10 @@ Future<void> main() async {
     return;
   }
 
-  Widget initialPage = const LoginPage();
   try {
     initialPage = await _checkLoginAndVersion();
-  } catch (e, stack) {
-    debugPrint('❌ Error inisialisasi: $e\n$stack');
+  } catch (e, st) {
+    debugPrint('❌ Error inisialisasi main: $e\n$st');
   }
 
   runApp(
@@ -62,10 +61,11 @@ Future<void> main() async {
 
   FlutterNativeSplash.remove();
 
-  // Start notification listener di background
+  // Jalankan service notifikasi background
   Future.microtask(() async {
     try {
       await NotifService.ensureStarted();
+      debugPrint("✅ NotifService berjalan");
     } catch (e, st) {
       debugPrint('⚠️ Gagal start NotifService: $e\n$st');
     }
@@ -74,13 +74,14 @@ Future<void> main() async {
 
 /// Cek login dan versi
 Future<Widget> _checkLoginAndVersion() async {
-  final prefs = await SharedPreferences.getInstance();
-  final packageInfo = await PackageInfo.fromPlatform();
-  final localVersion = packageInfo.version;
-
   try {
+    final prefs = await SharedPreferences.getInstance();
+    final packageInfo = await PackageInfo.fromPlatform();
+    final localVersion = packageInfo.version;
+
     final uri = Uri.parse("$apiUrl?t=${DateTime.now().millisecondsSinceEpoch}");
     final response = await http.get(uri);
+
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
       final latestVersion = (data['versi'] ?? "").toString();
@@ -88,7 +89,9 @@ Future<Widget> _checkLoginAndVersion() async {
       final tanggalUpdate = (data['tanggalUpdate'] ?? data['tanggal_update'] ?? "-").toString();
       final downloadUrl = (data['url_apk'] ?? data['url_download'] ?? "").toString();
 
-      if (latestVersion.isNotEmpty && downloadUrl.isNotEmpty && _isVersionLower(localVersion, latestVersion)) {
+      if (latestVersion.isNotEmpty &&
+          downloadUrl.isNotEmpty &&
+          _isVersionLower(localVersion, latestVersion)) {
         return UpdatePage(
           versi: latestVersion,
           changelog: changelog,
@@ -97,16 +100,15 @@ Future<Widget> _checkLoginAndVersion() async {
         );
       }
     }
-  } catch (e) {
-    debugPrint("⚠️ Gagal cek versi: $e");
+    final username = prefs.getString('username');
+    if (username != null && username.isNotEmpty) return const MainPage();
+  } catch (e, st) {
+    debugPrint('⚠️ Error cek login/version: $e\n$st');
   }
-
-  final username = prefs.getString('username');
-  if (username != null && username.isNotEmpty) return const MainPage();
   return const LoginPage();
 }
 
-/// Bandingkan versi
+/// Bandingkan versi APK
 bool _isVersionLower(String current, String latest) {
   final currParts = current.split('.').map((e) => int.tryParse(e) ?? 0).toList();
   final latestParts = latest.split('.').map((e) => int.tryParse(e) ?? 0).toList();
@@ -161,7 +163,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
-/// Wrapper Deep Link
+/// Deep Link Wrapper
 class DeepLinkWrapper extends StatefulWidget {
   final Widget initialPage;
   const DeepLinkWrapper({super.key, required this.initialPage});
@@ -183,8 +185,12 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
   }
 
   Future<void> _initUri() async {
-    final uri = await _appLinks.getInitialLink();
-    if (uri != null) setState(() => _pendingUri = uri);
+    try {
+      final uri = await _appLinks.getInitialLink();
+      if (uri != null) setState(() => _pendingUri = uri);
+    } catch (e) {
+      debugPrint("⚠️ Error getInitialLink: $e");
+    }
   }
 
   void _handleLink(Uri uri) {
@@ -209,7 +215,7 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
   }
 }
 
-/// Splash page
+/// Splash Page
 class CustomSplashPage extends StatefulWidget {
   final Widget nextPage;
   const CustomSplashPage({super.key, required this.nextPage});
@@ -223,7 +229,13 @@ class _CustomSplashPageState extends State<CustomSplashPage> {
   void initState() {
     super.initState();
     Timer(const Duration(seconds: 2), () {
-      Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => widget.nextPage));
+      try {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => widget.nextPage),
+        );
+      } catch (e) {
+        debugPrint('⚠️ Error pushReplacement splash: $e');
+      }
     });
   }
 
@@ -237,7 +249,8 @@ class _CustomSplashPageState extends State<CustomSplashPage> {
           children: [
             Image.asset('assets/x.png', width: 150, height: 150),
             const SizedBox(height: 20),
-            const CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(Colors.white)),
+            const CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white)),
           ],
         ),
       ),
