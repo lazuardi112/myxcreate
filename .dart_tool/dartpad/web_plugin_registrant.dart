@@ -10,6 +10,7 @@ import 'package:app_links_web/app_links_web.dart';
 import 'package:flutter_inappwebview_web/web/main.dart';
 import 'package:flutter_native_splash/flutter_native_splash_web.dart';
 import 'package:package_info_plus/src/package_info_plus_web.dart';
+import 'package:permission_handler_html/permission_handler_html.dart';
 import 'package:share_plus/src/share_plus_web.dart';
 import 'package:shared_preferences_web/shared_preferences_web.dart';
 import 'package:url_launcher_web/url_launcher_web.dart';
@@ -22,6 +23,7 @@ void registerPlugins([final Registrar? pluginRegistrar]) {
   InAppWebViewFlutterPlugin.registerWith(registrar);
   FlutterNativeSplashWeb.registerWith(registrar);
   PackageInfoPlusWebPlugin.registerWith(registrar);
+  WebPermissionHandler.registerWith(registrar);
   SharePlusWebPlugin.registerWith(registrar);
   SharedPreferencesPlugin.registerWith(registrar);
   UrlLauncherPlugin.registerWith(registrar);

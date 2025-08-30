@@ -33,7 +33,11 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  FlutterNativeSplash.preserve(widgetsBinding: WidgetsFlutterBinding.ensureInitialized());
+
+  // Splash screen native
+  FlutterNativeSplash.preserve(
+    widgetsBinding: WidgetsFlutterBinding.ensureInitialized(),
+  );
 
   if (kIsWeb) {
     runApp(const MaterialApp(
@@ -58,7 +62,7 @@ Future<void> main() async {
 
   FlutterNativeSplash.remove();
 
-  // Start notification listener
+  // Start notification listener di background
   Future.microtask(() async {
     try {
       await NotifService.ensureStarted();
@@ -68,6 +72,7 @@ Future<void> main() async {
   });
 }
 
+/// Cek login dan versi
 Future<Widget> _checkLoginAndVersion() async {
   final prefs = await SharedPreferences.getInstance();
   final packageInfo = await PackageInfo.fromPlatform();
@@ -101,6 +106,7 @@ Future<Widget> _checkLoginAndVersion() async {
   return const LoginPage();
 }
 
+/// Bandingkan versi
 bool _isVersionLower(String current, String latest) {
   final currParts = current.split('.').map((e) => int.tryParse(e) ?? 0).toList();
   final latestParts = latest.split('.').map((e) => int.tryParse(e) ?? 0).toList();
@@ -116,6 +122,7 @@ bool _isVersionLower(String current, String latest) {
   return false;
 }
 
+/// MyApp
 class MyApp extends StatelessWidget {
   final Widget initialPage;
   const MyApp({super.key, required this.initialPage});
@@ -154,6 +161,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
+/// Wrapper Deep Link
 class DeepLinkWrapper extends StatefulWidget {
   final Widget initialPage;
   const DeepLinkWrapper({super.key, required this.initialPage});
@@ -201,6 +209,7 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
   }
 }
 
+/// Splash page
 class CustomSplashPage extends StatefulWidget {
   final Widget nextPage;
   const CustomSplashPage({super.key, required this.nextPage});

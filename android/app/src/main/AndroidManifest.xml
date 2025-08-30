@@ -5,8 +5,7 @@
     <!-- Internet -->
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- Storage (Android 10 ke bawah). 
-         Android 11+ harus MANAGE_EXTERNAL_STORAGE (tidak direkomendasikan untuk Play Store) -->
+    <!-- Storage (Android 10 ke bawah) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
@@ -31,10 +30,10 @@
     <!-- Agar service tetap hidup di background -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
-    <!-- Dapat query aplikasi lain -->
+    <!-- Query semua aplikasi -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
-    <!-- Query intent (installed_apps butuh ini) -->
+    <!-- Query intent (installed_apps plugin butuh) -->
     <queries>
         <!-- Semua aplikasi dengan launcher -->
         <intent>
@@ -108,7 +107,7 @@
             </intent-filter>
         </service>
 
-        <!-- Flutter metadata -->
+        <!-- Flutter embedding -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
