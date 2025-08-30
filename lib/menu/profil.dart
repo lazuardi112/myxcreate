@@ -6,7 +6,6 @@ import 'package:intl/intl.dart';
 import 'package:myxcreate/auth/login.dart';
 import 'package:myxcreate/menu/detail.dart';
 import 'package:myxcreate/menu/perpanjang.dart';
-import 'package:myxcreate/ads.dart'; // <--- Tambahkan import AdsPage
 
 class ProfilPage extends StatefulWidget {
   const ProfilPage({super.key});
@@ -50,6 +49,7 @@ class _ProfilPageState extends State<ProfilPage> {
     }
     username = user;
 
+    // load cache data (profil + order)
     final localProfile = prefs.getString('profileData');
     final localOrders = prefs.getString('orderList');
 
@@ -72,6 +72,7 @@ class _ProfilPageState extends State<ProfilPage> {
       } catch (_) {}
     }
 
+    // fetch dari API
     _fetchAndSaveData();
   }
 
@@ -92,6 +93,7 @@ class _ProfilPageState extends State<ProfilPage> {
         orderList = orders;
         isLoading = false;
         isLoadingOrders = false;
+        errorMessage = null;
       });
     } catch (e) {
       if (!mounted) return;
@@ -146,6 +148,11 @@ class _ProfilPageState extends State<ProfilPage> {
         context, MaterialPageRoute(builder: (_) => const LoginPage()));
   }
 
+  void onPerpanjang() {
+    Navigator.push(
+        context, MaterialPageRoute(builder: (_) => const PerpanjangPage()));
+  }
+
   String safeString(dynamic value) {
     if (value == null) return '-';
     if (value is String) return value;
@@ -157,16 +164,6 @@ class _ProfilPageState extends State<ProfilPage> {
     final num? angka = num.tryParse(value.toString());
     if (angka == null) return '-';
     return _rupiahFormat.format(angka);
-  }
-
-  void onPerpanjang() {
-    Navigator.push(
-        context, MaterialPageRoute(builder: (_) => const PerpanjangPage()));
-  }
-
-  void onTambahMasaAktif() {
-    Navigator.push(
-        context, MaterialPageRoute(builder: (_) => const AdPage()));
   }
 
   Icon _statusAkunIcon(String? status) {
@@ -277,21 +274,6 @@ class _ProfilPageState extends State<ProfilPage> {
                       style: TextStyle(color: Colors.white)),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.amber.shade700,
-                    minimumSize: const Size.fromHeight(50),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: onTambahMasaAktif,
-                  icon: const Icon(Icons.ad_units, color: Colors.white),
-                  label: const Text('Tambah Masa Aktif',
-                      style: TextStyle(color: Colors.white)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue.shade600,
                     minimumSize: const Size.fromHeight(50),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12)),
