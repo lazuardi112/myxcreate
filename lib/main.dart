@@ -1,3 +1,4 @@
+// lib/main.dart
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -8,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:http/http.dart' as http;
 import 'package:app_links/app_links.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 // Halaman-halaman
 import 'auth/login.dart';
@@ -57,12 +59,17 @@ Future<void> main() async {
     debugPrint('❌ Error saat inisialisasi: $e\n$stack');
   }
 
-  runApp(MyApp(initialPage: initialPage));
+  // Bungkus app dengan ForegroundTask agar service bisa hidup terus
+  runApp(
+    WithForegroundTask(
+      child: MyApp(initialPage: initialPage),
+    ),
+  );
 
   // Hapus splash setelah app jalan
   FlutterNativeSplash.remove();
 
-  // Jalankan service background untuk capture notif (DITUNDA sampai setelah runApp)
+  // Jalankan service background untuk capture notif (setelah app start)
   Future.microtask(() async {
     try {
       await NotifService.ensureStarted();
