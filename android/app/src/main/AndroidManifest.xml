@@ -1,33 +1,50 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     package="com.example.myxcreate">
 
-    <!-- Internet & Webhook -->
-    <uses-permission android:name="android.permission.INTERNET"/>
-    <!-- Simpan/ambil data (opsional di Android 11+ harus MANAGE_EXTERNAL_STORAGE kalau perlu akses penuh) -->
+    <!-- Internet -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Akses file (Android 10 ke bawah) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32"/>
+        android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32"/>
-    <uses-permission android:name="android.permission.CAMERA"/>
+        android:maxSdkVersion="32" />
 
-    <!-- Permission untuk service foreground -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
-    <!-- Permission untuk dapat akses notifikasi -->
+    <!-- Kamera -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- Notifikasi Android 13+ -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Service foreground -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+
+    <!-- Notification Listener -->
     <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
-        tools:ignore="ProtectedPermissions"/>
+        tools:ignore="ProtectedPermissions" />
 
-    <!-- Android 11+ query aplikasi lain -->
+    <!-- WAKE_LOCK agar service tidak mati -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- QUERY semua aplikasi (jika pakai installed_apps plugin) -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+
+    <!-- QUERY intent -->
     <queries>
-        <!-- Query semua aplikasi dengan intent launcher -->
+        <!-- Semua aplikasi dengan launcher -->
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
 
-        <!-- Query text process -->
+        <!-- Proses text -->
         <intent>
-            <action android:name="android.intent.action.PROCESS_TEXT"/>
-            <data android:mimeType="text/plain"/>
+            <action android:name="android.intent.action.PROCESS_TEXT" />
+            <data android:mimeType="text/plain" />
         </intent>
     </queries>
 
@@ -35,7 +52,8 @@
         android:label="Xcreate Member"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="true"
+        tools:replace="android:allowBackup">
 
         <!-- Activity utama Flutter -->
         <activity
@@ -48,37 +66,35 @@
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
 
-            <!-- Tema Normal untuk background sebelum Flutter siap -->
+            <!-- Tema Normal -->
             <meta-data
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme" />
 
-            <!-- Launcher utama -->
+            <!-- Launcher -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Deep Link untuk https://xcreate.my.id -->
+            <!-- Deep Link -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-
-                <!-- Semua URL dari domain ini diarahkan ke aplikasi -->
                 <data
                     android:scheme="https"
                     android:host="xcreate.my.id" />
             </intent-filter>
         </activity>
 
-        <!-- Service untuk foreground task (flutter_foreground_task) -->
+        <!-- Foreground task (flutter_foreground_task) -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
             android:foregroundServiceType="dataSync|connectedDevice|mediaProjection"
             android:exported="false" />
 
-        <!-- Service untuk listener notifikasi -->
+        <!-- Notification Listener -->
         <service
             android:name="com.kronos.notification_listener.NotificationListener"
             android:label="Xcreate Notifikasi"
@@ -89,7 +105,7 @@
             </intent-filter>
         </service>
 
-        <!-- Wajib untuk Flutter -->
+        <!-- Flutter metadata -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
