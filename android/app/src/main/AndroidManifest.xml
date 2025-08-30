@@ -5,7 +5,8 @@
     <!-- Internet -->
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- Akses file (Android 10 ke bawah) -->
+    <!-- Storage (Android 10 ke bawah). 
+         Android 11+ harus MANAGE_EXTERNAL_STORAGE (tidak direkomendasikan untuk Play Store) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
@@ -14,10 +15,10 @@
     <!-- Kamera -->
     <uses-permission android:name="android.permission.CAMERA" />
 
-    <!-- Notifikasi Android 13+ -->
+    <!-- Notifikasi (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Service foreground -->
+    <!-- Foreground service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
@@ -27,13 +28,13 @@
     <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
         tools:ignore="ProtectedPermissions" />
 
-    <!-- WAKE_LOCK agar service tidak mati -->
+    <!-- Agar service tetap hidup di background -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
-    <!-- QUERY semua aplikasi (jika pakai installed_apps plugin) -->
+    <!-- Dapat query aplikasi lain -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
-    <!-- QUERY intent -->
+    <!-- Query intent (installed_apps butuh ini) -->
     <queries>
         <!-- Semua aplikasi dengan launcher -->
         <intent>
@@ -49,10 +50,12 @@
     </queries>
 
     <application
-        android:label="Xcreate Member"
         android:name="${applicationName}"
+        android:label="Xcreate Member"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true"
+        android:allowBackup="true"
+        android:fullBackupContent="true"
         tools:replace="android:allowBackup">
 
         <!-- Activity utama Flutter -->
@@ -66,7 +69,7 @@
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
 
-            <!-- Tema Normal -->
+            <!-- Tema Normal sebelum Flutter siap -->
             <meta-data
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme" />
@@ -88,7 +91,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Foreground task (flutter_foreground_task) -->
+        <!-- Service foreground (flutter_foreground_task) -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
             android:foregroundServiceType="dataSync|connectedDevice|mediaProjection"
