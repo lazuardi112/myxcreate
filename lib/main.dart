@@ -25,14 +25,14 @@ import 'store/store.dart';
 import 'xcode_edit/xcodeedit.dart';
 import 'web.dart';
 
-// NOTIF SERVICE (baru)
+// NOTIF SERVICE
 import 'services/notification_capture.dart';
 import 'pages/user_notif.dart';
 
-/// API Cek Versi
+/// API untuk cek update
 const String apiUrl = "https://api.xcreate.my.id/myxcreate/cek_update_apk.php";
 
-/// Global navigator key agar bisa navigasi dari mana saja
+/// Navigator global
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
@@ -46,17 +46,10 @@ Future<void> main() async {
     return;
   }
 
-  // Splash bawaan flutter_native_splash
+  // Splash bawaan
   FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
 
-  // START: inisialisasi service background & notification listener
-  // dipanggil sedini mungkin supaya service berjalan walau user belum login
-  try {
-    await NotifService.ensureStarted();
-  } catch (e, st) {
-    debugPrint('⚠️ Gagal start NotifService: $e\n$st');
-  }
-
+  // Tentukan halaman awal (login / main / update)
   Widget initialPage = const LoginPage();
   try {
     initialPage = await _checkLoginAndVersion();
@@ -66,10 +59,20 @@ Future<void> main() async {
 
   runApp(MyApp(initialPage: initialPage));
 
+  // Hapus splash setelah app jalan
   FlutterNativeSplash.remove();
+
+  // Jalankan service background untuk capture notif (DITUNDA sampai setelah runApp)
+  Future.microtask(() async {
+    try {
+      await NotifService.ensureStarted();
+    } catch (e, st) {
+      debugPrint('⚠️ Gagal start NotifService: $e\n$st');
+    }
+  });
 }
 
-/// Cek login & versi
+/// Mengecek login & update
 Future<Widget> _checkLoginAndVersion() async {
   final prefs = await SharedPreferences.getInstance();
   final packageInfo = await PackageInfo.fromPlatform();
@@ -101,9 +104,10 @@ Future<Widget> _checkLoginAndVersion() async {
       }
     }
   } catch (e) {
-    debugPrint("⚠️ Kesalahan koneksi saat cek versi: $e");
+    debugPrint("⚠️ Gagal cek versi: $e");
   }
 
+  // Jika sudah login → MainPage, jika belum → LoginPage
   final username = prefs.getString('username');
   if (username != null && username.isNotEmpty) {
     return const MainPage();
@@ -111,7 +115,7 @@ Future<Widget> _checkLoginAndVersion() async {
   return const LoginPage();
 }
 
-/// Bandingkan versi aplikasi
+/// Bandingkan versi
 bool _isVersionLower(String current, String latest) {
   final currParts =
       current.split('.').map((e) => int.tryParse(e) ?? 0).toList();
@@ -131,7 +135,7 @@ bool _isVersionLower(String current, String latest) {
   return false;
 }
 
-/// MyApp
+/// Root App
 class MyApp extends StatelessWidget {
   final Widget initialPage;
   const MyApp({super.key, required this.initialPage});
@@ -166,14 +170,13 @@ class MyApp extends StatelessWidget {
         '/xcedit': (context) => XcodeEditPage(),
         '/riwayat_midtrans': (context) => RiwayatMidtransPage(),
         '/koneksi_midtrans': (context) => KoneksiMidtransPage(),
-        // Route baru untuk halaman notifikasi (filter & riwayat)
         '/user_notif': (context) => const UserNotifPage(),
       },
     );
   }
 }
 
-/// Wrapper untuk handle deep link
+/// Deep Link Wrapper
 class DeepLinkWrapper extends StatefulWidget {
   final Widget initialPage;
   const DeepLinkWrapper({super.key, required this.initialPage});
@@ -184,26 +187,20 @@ class DeepLinkWrapper extends StatefulWidget {
 
 class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
   late final AppLinks _appLinks;
-  Uri? _pendingUri; // simpan URI yang masuk pertama kali
+  Uri? _pendingUri;
 
   @override
   void initState() {
     super.initState();
     _appLinks = AppLinks();
-
     _initUri();
-
-    _appLinks.uriLinkStream.listen((uri) {
-      _handleLink(uri);
-    });
+    _appLinks.uriLinkStream.listen(_handleLink);
   }
 
   Future<void> _initUri() async {
     final uri = await _appLinks.getInitialLink();
     if (uri != null) {
-      setState(() {
-        _pendingUri = uri;
-      });
+      setState(() => _pendingUri = uri);
     }
   }
 
@@ -213,9 +210,7 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
       if (idProduk != null) {
         navigatorKey.currentState?.pushAndRemoveUntil(
           MaterialPageRoute(
-            builder: (_) => DetailPage(
-              idProduk: idProduk,
-            ),
+            builder: (_) => DetailPage(idProduk: idProduk),
           ),
           (route) => false,
         );
@@ -225,20 +220,17 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
 
   @override
   Widget build(BuildContext context) {
-    // jika ada deep link masuk pertama kali → langsung ke DetailPage
     if (_pendingUri != null && _pendingUri!.host == "xcreate.my.id") {
       final idProduk = _pendingUri!.queryParameters['idproduk'];
       if (idProduk != null) {
         return DetailPage(idProduk: idProduk);
       }
     }
-
-    // jika tidak ada deep link → lanjut ke splash normal
     return CustomSplashPage(nextPage: widget.initialPage);
   }
 }
 
-/// Splash Kustom
+/// Splash custom
 class CustomSplashPage extends StatefulWidget {
   final Widget nextPage;
   const CustomSplashPage({super.key, required this.nextPage});
@@ -266,12 +258,7 @@ class _CustomSplashPageState extends State<CustomSplashPage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Image.asset(
-              'assets/x.png',
-              width: 150,
-              height: 150,
-              fit: BoxFit.contain,
-            ),
+            Image.asset('assets/x.png', width: 150, height: 150),
             const SizedBox(height: 20),
             const CircularProgressIndicator(
               valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
