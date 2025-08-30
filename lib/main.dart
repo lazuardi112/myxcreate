@@ -4,18 +4,19 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
-import 'package:myxcreate/store/detail.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:http/http.dart' as http;
 import 'package:app_links/app_links.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:notification_listener_service/notification_listener_service.dart';
 
-// Halaman-halaman
+// Halaman-halaman (sesuaikan import jika ada perbedaan path)
 import 'auth/login.dart';
 import 'main_page.dart';
 import 'menu_fitur/midtrans/koneksi_midtrans.dart';
 import 'menu_fitur/midtrans/riwayat.dart';
+import 'store/detail.dart';
 import 'update_page.dart';
 import 'menu_fitur/atur_koneksi_pg.dart';
 import 'menu_fitur/dashboard_pembayaran.dart';
@@ -27,19 +28,20 @@ import 'store/store.dart';
 import 'xcode_edit/xcodeedit.dart';
 import 'web.dart';
 
-// NOTIF SERVICE
+// NOTIF SERVICE (pastikan file ini ada & telah disesuaikan)
 import 'services/notification_capture.dart';
 import 'pages/user_notif.dart';
 
 /// API untuk cek update
 const String apiUrl = "https://api.xcreate.my.id/myxcreate/cek_update_apk.php";
 
-/// Navigator global
+/// Navigator global agar bisa update UI / buka page dari callback
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
 
+  // Jangan jalankan service di web
   if (kIsWeb) {
     runApp(const MaterialApp(
       debugShowCheckedModeBanner: false,
@@ -48,38 +50,48 @@ Future<void> main() async {
     return;
   }
 
-  // Splash bawaan
+  // preserve native splash sampai kita siap
   FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
 
-  // Tentukan halaman awal (login / main / update)
+  // Tentukan halaman awal (Login atau Main atau Update)
   Widget initialPage = const LoginPage();
   try {
     initialPage = await _checkLoginAndVersion();
-  } catch (e, stack) {
-    debugPrint('❌ Error saat inisialisasi: $e\n$stack');
+  } catch (e, st) {
+    debugPrint('❌ Error saat inisialisasi: $e\n$st');
   }
 
-  // Bungkus app dengan ForegroundTask agar service bisa hidup terus
+  // Bungkus dengan WithForegroundTask agar library foreground task siap
   runApp(
     WithForegroundTask(
       child: MyApp(initialPage: initialPage),
     ),
   );
 
-  // Hapus splash setelah app jalan
+  // Hapus splash setelah UI render
   FlutterNativeSplash.remove();
 
-  // Jalankan service background untuk capture notif (setelah app start)
+  // Mulai service background & listener notifikasi setelah app start
+  // (gunakan microtask supaya tidak men-block runApp)
   Future.microtask(() async {
     try {
       await NotifService.ensureStarted();
+      // tambahan: kalau mau juga bisa mendengarkan event notification langsung di main
+      // tapi NotifService._onNotification sudah menyimpan/push ke webhook.
+      // Di sini kita hanya perlihatkan contoh notifikasi foreground saat app terbuka.
+      NotificationListenerService.notificationsStream.listen((event) async {
+        // contoh logging singkat ketika notifikasi diterima
+        debugPrint('📩 event main: ${event.packageName} | ${event.title}');
+        // Jika ingin, bisa show snackbar (cek jika ada context aktif)
+        // atau memanggil navigatorKey untuk push page tertentu.
+      });
     } catch (e, st) {
-      debugPrint('⚠️ Gagal start NotifService: $e\n$st');
+      debugPrint('⚠️ Gagal start NotifService atau listener: $e\n$st');
     }
   });
 }
 
-/// Mengecek login & update
+/// Check login & versi (sama fungsi seperti kamu sebelumnya)
 Future<Widget> _checkLoginAndVersion() async {
   final prefs = await SharedPreferences.getInstance();
   final packageInfo = await PackageInfo.fromPlatform();
@@ -114,7 +126,6 @@ Future<Widget> _checkLoginAndVersion() async {
     debugPrint("⚠️ Gagal cek versi: $e");
   }
 
-  // Jika sudah login → MainPage, jika belum → LoginPage
   final username = prefs.getString('username');
   if (username != null && username.isNotEmpty) {
     return const MainPage();
@@ -122,7 +133,6 @@ Future<Widget> _checkLoginAndVersion() async {
   return const LoginPage();
 }
 
-/// Bandingkan versi
 bool _isVersionLower(String current, String latest) {
   final currParts =
       current.split('.').map((e) => int.tryParse(e) ?? 0).toList();
@@ -151,7 +161,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       navigatorKey: navigatorKey,
-      title: "MyXCreate",
+      title: 'MyXCreate',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         primarySwatch: Colors.deepPurple,
@@ -183,7 +193,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
-/// Deep Link Wrapper
+/// Deep Link Wrapper (sama seperti sebelumnya)
 class DeepLinkWrapper extends StatefulWidget {
   final Widget initialPage;
   const DeepLinkWrapper({super.key, required this.initialPage});
@@ -216,9 +226,7 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
       final idProduk = uri.queryParameters['idproduk'];
       if (idProduk != null) {
         navigatorKey.currentState?.pushAndRemoveUntil(
-          MaterialPageRoute(
-            builder: (_) => DetailPage(idProduk: idProduk),
-          ),
+          MaterialPageRoute(builder: (_) => DetailPage(idProduk: idProduk)),
           (route) => false,
         );
       }
@@ -237,7 +245,7 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
   }
 }
 
-/// Splash custom
+/// Custom splash page (sama seperti kamu punya)
 class CustomSplashPage extends StatefulWidget {
   final Widget nextPage;
   const CustomSplashPage({super.key, required this.nextPage});

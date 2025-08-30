@@ -10,10 +10,7 @@ import 'package:installed_apps/app_info.dart';
 import 'package:http/http.dart' as http;
 
 /// Service untuk menangkap notifikasi, menyimpan ke SharedPreferences,
-/// dan (opsional) POST ke webhook.
-///
-/// PENTING: jangan panggil InstalledApps.getAppInfo(...) di sini (handler background).
-/// Lakukan lookup nama aplikasi di UI/main isolate.
+/// dan POST ke webhook jika diatur.
 class NotifService {
   static const _keySelectedPkgs = 'selected_packages';
   static const _keyCaptured = 'captured_notifs';
@@ -28,16 +25,15 @@ class NotifService {
       FlutterForegroundTask.initCommunicationPort();
     } catch (_) {}
 
-    // Inisialisasi opsi foreground task (sesuaikan versi plugin)
-    // jangan pakai await karena init() di beberapa versi tidak mengembalikan Future
+    // Inisialisasi opsi foreground task
     FlutterForegroundTask.init(
       androidNotificationOptions: AndroidNotificationOptions(
         channelId: 'fg_channel',
         channelName: 'Background Service',
-        channelDescription: 'Service untuk menangkap notifikasi',
-        onlyAlertOnce: true,
+        channelDescription: 'Service menangkap notifikasi',
         channelImportance: NotificationChannelImportance.LOW,
         priority: NotificationPriority.LOW,
+        onlyAlertOnce: true,
       ),
       iosNotificationOptions: IOSNotificationOptions(
         showNotification: false,
@@ -62,26 +58,23 @@ class NotifService {
       );
     }
 
-    // Pastikan permission akses notifikasi (Notification Access)
+    // Pastikan izin akses notifikasi
     final granted = await NotificationListenerService.isPermissionGranted();
     if (!granted) {
       await NotificationListenerService.requestPermission();
-      // user akan dibawa ke setting, mereka harus kembali ke aplikasi
     }
 
     // Daftarkan listener notifikasi
-    // (plugin mengirim event ke main isolate; handler disini akan jalan di main isolate)
     NotificationListenerService.notificationsStream.listen(_onNotification);
   }
 
-  // callback entry-point untuk foreground task (dipanggil native)
+  /// Callback entry-point untuk foreground task
   @pragma('vm:entry-point')
   static void _startCallback() {
     FlutterForegroundTask.setTaskHandler(_FgHandler());
   }
 
   /// Handler notifikasi masuk
-  /// NOTE: jangan memanggil plugin lain yang tidak aman di background; cukup simpan package.
   static Future<void> _onNotification(ServiceNotificationEvent e) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -91,23 +84,19 @@ class NotifService {
       final title = e.title ?? '';
       final content = e.content ?? '';
 
-      // Filter: hanya simpan jika package dicentang user
       if (!selected.contains(pkg)) return;
 
-      // Simpan record — jangan panggil InstalledApps.getAppInfo di sini.
-      // appName akan diisi saat ditampilkan di UI (main isolate).
       final rec = <String, dynamic>{
         'package': pkg,
-        'appName': '', // kosong untuk sekarang; UI akan mengisi
+        'appName': '', // UI nanti yang resolve nama app
         'title': title,
         'content': content,
         'timestamp': DateTime.now().toIso8601String(),
       };
 
-      // Simpan ke SharedPreferences (sebagai list JSON string)
+      // simpan ke SharedPreferences
       final list = prefs.getStringList(_keyCaptured) ?? [];
       list.insert(0, jsonEncode(rec));
-      // batasi panjang list
       if (list.length > 500) list.removeRange(500, list.length);
       await prefs.setStringList(_keyCaptured, list);
 
@@ -121,7 +110,7 @@ class NotifService {
             body: jsonEncode(rec),
           );
         } catch (err) {
-          debugPrint('NotifService: webhook POST error: $err');
+          debugPrint('NotifService webhook error: $err');
         }
       }
     } catch (err, st) {
@@ -129,25 +118,19 @@ class NotifService {
     }
   }
 
-  // === Helpers public ===
+  // === Public helper ===
 
-  /// Ambil daftar aplikasi terinstall (dipakai oleh UI/main isolate)
   static Future<List<AppInfo>> getInstalledApps() async {
-    final apps = await InstalledApps.getInstalledApps(
-      false, // exclude system apps
-      true,  // include icons
-    );
+    final apps = await InstalledApps.getInstalledApps(false, true);
     apps.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     return apps;
   }
 
-  /// Ambil list package yang dipilih user
   static Future<List<String>> getSelectedPackages() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getStringList(_keySelectedPkgs) ?? [];
   }
 
-  /// Toggle checkbox aplikasi (simpan package name)
   static Future<void> togglePackage(String pkg) async {
     final prefs = await SharedPreferences.getInstance();
     final list = prefs.getStringList(_keySelectedPkgs) ?? [];
@@ -159,7 +142,6 @@ class NotifService {
     await prefs.setStringList(_keySelectedPkgs, list);
   }
 
-  /// Ambil riwayat notifikasi (list map)
   static Future<List<Map<String, dynamic>>> getCaptured() async {
     final prefs = await SharedPreferences.getInstance();
     final list = prefs.getStringList(_keyCaptured) ?? [];
@@ -186,35 +168,35 @@ class NotifService {
   }
 }
 
-/// TaskHandler untuk foreground task
+/// Foreground Task Handler
 class _FgHandler extends TaskHandler {
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
-    debugPrint('FgHandler onStart: $timestamp');
+    debugPrint('ForegroundTask started at $timestamp');
   }
 
   @override
   void onRepeatEvent(DateTime timestamp) {
-    debugPrint('FgHandler onRepeatEvent: $timestamp');
+    debugPrint('ForegroundTask repeat event: $timestamp');
   }
 
   @override
   Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
-    debugPrint('FgHandler onDestroy');
+    debugPrint('ForegroundTask destroyed');
   }
 
   @override
   void onReceiveData(Object data) {
-    debugPrint('FgHandler onReceiveData: $data');
+    debugPrint('ForegroundTask received data: $data');
   }
 
   @override
   void onNotificationButtonPressed(String id) {
-    debugPrint('FgHandler onNotificationButtonPressed: $id');
+    debugPrint('Notification button pressed: $id');
   }
 
   @override
   void onNotificationPressed() {
-    debugPrint('FgHandler onNotificationPressed');
+    debugPrint('Notification pressed');
   }
 }
