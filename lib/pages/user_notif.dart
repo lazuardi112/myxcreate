@@ -1,8 +1,10 @@
+// lib/pages/user_notif.dart
 import 'package:flutter/material.dart';
-import 'package:installed_apps/installed_apps.dart';
 import 'package:installed_apps/app_info.dart';
-import '../services/notification_capture.dart';
+import 'package:notification_listener_service/notification_listener_service.dart';
 import 'package:permission_handler/permission_handler.dart';
+import '../services/notification_capture.dart';
+import 'dart:io';
 
 class UserNotifPage extends StatefulWidget {
   const UserNotifPage({super.key});
@@ -33,14 +35,18 @@ class _UserNotifPageState extends State<UserNotifPage>
   Future<void> _loadAll() async {
     setState(() => _loading = true);
 
+    // start service
     await NotifService.ensureStarted();
 
-    final apps = await InstalledApps.getInstalledApps(true, true);
+    final apps = await NotifService.getInstalledApps();
     final selected = await NotifService.getSelectedPackages();
     final captured = await NotifService.getCaptured();
     final webhook = await NotifService.getWebhook() ?? '';
 
-    final Map<String, String> appMap = {for (final a in apps) a.packageName: a.name};
+    final Map<String, String> appMap = {
+      for (final a in apps) a.packageName: a.name
+    };
+
     final enriched = captured.map((m) {
       final pkg = m['package']?.toString() ?? '';
       final enrichedMap = Map<String, dynamic>.from(m);
@@ -63,9 +69,12 @@ class _UserNotifPageState extends State<UserNotifPage>
   void _applySearch() {
     final q = _searchCtrl.text.toLowerCase();
     setState(() {
-      _filteredApps = q.isEmpty
-          ? _apps
-          : _apps.where((a) => a.name.toLowerCase().contains(q)).toList();
+      if (q.isEmpty) {
+        _filteredApps = _apps;
+      } else {
+        _filteredApps =
+            _apps.where((a) => a.name.toLowerCase().contains(q)).toList();
+      }
     });
   }
 
@@ -95,17 +104,39 @@ class _UserNotifPageState extends State<UserNotifPage>
     await _refreshCaptured();
   }
 
-  Future<void> _requestPermissions() async {
-    await Permission.notification.request();
-    await Permission.camera.request();
-    await Permission.storage.request();
+  Future<void> _startBackgroundService() async {
+    try {
+      await NotifService.ensureStarted();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Service notifikasi berjalan di background')),
+        );
+      }
+    } catch (e) {
+      debugPrint('Gagal memulai service: $e');
+    }
   }
 
-  Future<void> _startForegroundService() async {
-    await NotifService.ensureStarted();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Foreground service berjalan')),
-    );
+  Future<void> _checkPermissions() async {
+    // Android 13+ POST_NOTIFICATIONS
+    if (Platform.isAndroid) {
+      final notifPerm = await Permission.notification.status;
+      if (!notifPerm.isGranted) {
+        await Permission.notification.request();
+      }
+    }
+
+    // Notifikasi Listener
+    final granted = await NotificationListenerService.isPermissionGranted();
+    if (!granted) {
+      await NotificationListenerService.requestPermission();
+    }
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Periksa izin sudah dilakukan')),
+      );
+    }
   }
 
   @override
@@ -118,51 +149,67 @@ class _UserNotifPageState extends State<UserNotifPage>
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context).copyWith(
-      colorScheme: Theme.of(context).colorScheme.copyWith(
-            primary: Colors.deepPurple,
-            secondary: Colors.deepPurple.shade200,
-          ),
-    );
-
-    return Theme(
-      data: theme,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Notifikasi Aplikasi'),
-          bottom: TabBar(
-            controller: _tab,
-            tabs: const [
-              Tab(icon: Icon(Icons.tune, color: Colors.white), text: 'Pilih Aplikasi'),
-              Tab(icon: Icon(Icons.notifications, color: Colors.white), text: 'Notifikasi Masuk'),
-            ],
-          ),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.refresh, color: Colors.white),
-              onPressed: _loadAll,
-            )
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Notifikasi Aplikasi'),
+        bottom: TabBar(
+          controller: _tab,
+          tabs: const [
+            Tab(icon: Icon(Icons.tune, color: Colors.white), text: 'Pilih Aplikasi'),
+            Tab(icon: Icon(Icons.notifications, color: Colors.white), text: 'Notifikasi Masuk'),
           ],
         ),
-        body: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : TabBarView(
-                controller: _tab,
-                children: [
-                  _buildFilterTab(),
-                  _buildCapturedTab(),
-                ],
-              ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh, color: Colors.white),
+            onPressed: _loadAll,
+            tooltip: 'Reload',
+          )
+        ],
       ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : TabBarView(
+              controller: _tab,
+              children: [
+                _buildFilterTab(),
+                _buildCapturedTab(),
+              ],
+            ),
     );
   }
 
   Widget _buildFilterTab() {
     return Column(
       children: [
-        // Webhook input
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: Row(
+            children: [
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.deepPurple,
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: _startBackgroundService,
+                icon: const Icon(Icons.play_arrow),
+                label: const Text('Mulai Background'),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.orange,
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: _checkPermissions,
+                icon: const Icon(Icons.verified_user),
+                label: const Text('Cek & Izin'),
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
           child: Row(
             children: [
               const Icon(Icons.link, color: Colors.deepPurple),
@@ -198,28 +245,6 @@ class _UserNotifPageState extends State<UserNotifPage>
             ],
           ),
         ),
-
-        // Tombol foreground & izin
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: Row(
-            children: [
-              ElevatedButton.icon(
-                icon: const Icon(Icons.play_arrow),
-                label: const Text('Mulai Background Service'),
-                onPressed: _startForegroundService,
-              ),
-              const SizedBox(width: 12),
-              OutlinedButton.icon(
-                icon: const Icon(Icons.lock_open),
-                label: const Text('Izin Diperlukan'),
-                onPressed: _requestPermissions,
-              )
-            ],
-          ),
-        ),
-
-        // Search box
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: TextField(
@@ -233,7 +258,6 @@ class _UserNotifPageState extends State<UserNotifPage>
             ),
           ),
         ),
-
         const Divider(height: 0),
         Expanded(
           child: ListView.builder(
@@ -328,9 +352,32 @@ class _UserNotifPageState extends State<UserNotifPage>
                         IconButton(
                           icon: const Icon(Icons.delete, color: Colors.red, size: 20),
                           onPressed: () => _deleteCapturedAt(i - 1),
-                        ),
+                        )
                       ],
                     ),
+                    onTap: () {
+                      showDialog(
+                        context: context,
+                        builder: (_) => AlertDialog(
+                          title: Text(n['title'] ?? 'Tanpa Judul'),
+                          content: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Aplikasi: ${n['appName'] ?? n['package']}'),
+                              Text('Isi: ${n['content'] ?? ''}'),
+                              Text('Waktu: ${n['timestamp'] ?? ''}'),
+                            ],
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(context),
+                              child: const Text('Tutup'),
+                            )
+                          ],
+                        ),
+                      );
+                    },
                   ),
                 );
               },

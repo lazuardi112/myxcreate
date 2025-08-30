@@ -147,6 +147,8 @@ class NotifService {
     if (url == null || url.isEmpty) await prefs.remove(_keyWebhook);
     else await prefs.setString(_keyWebhook, url);
   }
+
+  static Future getInstalledApps() async {}
 }
 
 class _FgHandler extends TaskHandler {
