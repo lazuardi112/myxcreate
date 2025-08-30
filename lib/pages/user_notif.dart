@@ -1,6 +1,6 @@
 // lib/pages/user_notif.dart
 import 'package:flutter/material.dart';
-import 'package:installed_apps/installed_apps.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:installed_apps/app_info.dart';
 import '../services/notification_capture.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
