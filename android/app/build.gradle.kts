@@ -1,7 +1,7 @@
 plugins {
     id("com.android.application")
     id("kotlin-android")
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+    // Flutter Gradle Plugin harus setelah Android dan Kotlin plugin
     id("dev.flutter.flutter-gradle-plugin")
 }
 
@@ -21,21 +21,25 @@ android {
 
     defaultConfig {
         applicationId = "com.example.myxcreate"
-        minSdk = flutter.minSdkVersion
+
+        // ✅ fix minSdk agar cocok google_mobile_ads
+        minSdk = 23
         targetSdk = flutter.targetSdkVersion
+
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
         multiDexEnabled = true
     }
 
-    // ✅ Kotlin DSL harus pakai create()
     signingConfigs {
         create("release") {
-            storeFile = file("my-release-key.jks")  // lokasi file jks
-            storePassword = "ardigg12"              // password keystore
-            keyAlias = "myalias"                    // alias
-            keyPassword = "ardigg12"                // password alias
+            storeFile = file("my-release-key.jks")   // path ke keystore
+            storePassword = "ardigg12"               // password keystore
+            keyAlias = "myalias"                     // alias
+            keyPassword = "ardigg12"                 // password alias
         }
+        // ❌ jangan buat debug di sini, sudah otomatis dari Flutter
     }
 
     buildTypes {
@@ -49,7 +53,8 @@ android {
             )
         }
         getByName("debug") {
-            signingConfig = signingConfigs.getByName("debug")
+            // otomatis pakai debug keystore bawaan
+            isMinifyEnabled = false
         }
     }
 

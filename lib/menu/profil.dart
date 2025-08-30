@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:myxcreate/auth/login.dart';
 import 'package:myxcreate/menu/detail.dart';
 import 'package:myxcreate/menu/perpanjang.dart';
+import 'package:myxcreate/ads.dart'; // <--- Tambahkan import AdsPage
 
 class ProfilPage extends StatefulWidget {
   const ProfilPage({super.key});
@@ -163,6 +164,11 @@ class _ProfilPageState extends State<ProfilPage> {
         context, MaterialPageRoute(builder: (_) => const PerpanjangPage()));
   }
 
+  void onTambahMasaAktif() {
+    Navigator.push(
+        context, MaterialPageRoute(builder: (_) => const AdPage()));
+  }
+
   Icon _statusAkunIcon(String? status) {
     if (status == null) return const Icon(Icons.help, color: Colors.grey);
     if (status.toLowerCase() == 'aktif') {
@@ -277,7 +283,22 @@ class _ProfilPageState extends State<ProfilPage> {
                   ),
                 ),
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: onTambahMasaAktif,
+                  icon: const Icon(Icons.ad_units, color: Colors.white),
+                  label: const Text('Tambah Masa Aktif',
+                      style: TextStyle(color: Colors.white)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue.shade600,
+                    minimumSize: const Size.fromHeight(50),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
               Expanded(
                 child: ElevatedButton.icon(
                   onPressed: logout,
