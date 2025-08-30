@@ -25,6 +25,10 @@ import 'store/store.dart';
 import 'xcode_edit/xcodeedit.dart';
 import 'web.dart';
 
+// NOTIF SERVICE (baru)
+import 'services/notification_capture.dart';
+import 'pages/user_notif.dart';
+
 /// API Cek Versi
 const String apiUrl = "https://api.xcreate.my.id/myxcreate/cek_update_apk.php";
 
@@ -44,6 +48,14 @@ Future<void> main() async {
 
   // Splash bawaan flutter_native_splash
   FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
+
+  // START: inisialisasi service background & notification listener
+  // dipanggil sedini mungkin supaya service berjalan walau user belum login
+  try {
+    await NotifService.ensureStarted();
+  } catch (e, st) {
+    debugPrint('⚠️ Gagal start NotifService: $e\n$st');
+  }
 
   Widget initialPage = const LoginPage();
   try {
@@ -154,6 +166,8 @@ class MyApp extends StatelessWidget {
         '/xcedit': (context) => XcodeEditPage(),
         '/riwayat_midtrans': (context) => RiwayatMidtransPage(),
         '/koneksi_midtrans': (context) => KoneksiMidtransPage(),
+        // Route baru untuk halaman notifikasi (filter & riwayat)
+        '/user_notif': (context) => const UserNotifPage(),
       },
     );
   }

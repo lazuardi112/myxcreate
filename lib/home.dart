@@ -135,6 +135,9 @@ class _HomePageState extends State<HomePage>
       case 'Upload Produk':
         route = '/upload_produk';
         break;
+        case 'Ambil Notiikasi':
+        route = '/user_notif';
+        break;
       default:
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Menu '$title' Masih Dalam Pengembangan.")),
@@ -495,6 +498,7 @@ class _HomePageState extends State<HomePage>
     List<Map<String, dynamic>> paymentGatewayMenu = [
       {"title": "Tambah Pembayaran", "icon": Icons.add_card},
       {"title": "Atur Koneksi", "icon": Icons.settings_input_component},
+      {"title": "Ambil Notiikasi", "icon": Icons.notification_important},
     ];
 
     List<Map<String, dynamic>> transferSaldoMenu = [

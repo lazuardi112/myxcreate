@@ -24,6 +24,9 @@ dependencies:
   flutter_launcher_icons: ^0.14.4
   app_links: ^6.4.1
   share_plus: ^11.1.0
+  flutter_foreground_task: ^9.1.0
+  notification_listener_service: ^0.3.4
+  installed_apps: ^1.6.0
 
 dev_dependencies:
   flutter_test:

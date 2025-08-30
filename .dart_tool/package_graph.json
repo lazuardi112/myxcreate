@@ -11,11 +11,14 @@
         "cached_network_image",
         "cupertino_icons",
         "flutter",
+        "flutter_foreground_task",
         "flutter_inappwebview",
         "flutter_launcher_icons",
         "flutter_native_splash",
         "http",
+        "installed_apps",
         "intl",
+        "notification_listener_service",
         "package_info_plus",
         "share_plus",
         "shared_preferences",
@@ -94,6 +97,30 @@
         "test_api",
         "vector_math",
         "vm_service"
+      ]
+    },
+    {
+      "name": "installed_apps",
+      "version": "1.6.0",
+      "dependencies": [
+        "flutter"
+      ]
+    },
+    {
+      "name": "notification_listener_service",
+      "version": "0.3.4",
+      "dependencies": [
+        "flutter"
+      ]
+    },
+    {
+      "name": "flutter_foreground_task",
+      "version": "9.1.0",
+      "dependencies": [
+        "flutter",
+        "platform",
+        "plugin_platform_interface",
+        "shared_preferences"
       ]
     },
     {
@@ -679,6 +706,18 @@
       ]
     },
     {
+      "name": "platform",
+      "version": "3.1.6",
+      "dependencies": []
+    },
+    {
+      "name": "plugin_platform_interface",
+      "version": "2.1.8",
+      "dependencies": [
+        "meta"
+      ]
+    },
+    {
       "name": "win32",
       "version": "5.14.0",
       "dependencies": [
@@ -1215,13 +1254,6 @@
       ]
     },
     {
-      "name": "plugin_platform_interface",
-      "version": "2.1.8",
-      "dependencies": [
-        "meta"
-      ]
-    },
-    {
       "name": "uuid",
       "version": "4.5.1",
       "dependencies": [
@@ -1410,11 +1442,6 @@
         "sqflite_common",
         "sqflite_platform_interface"
       ]
-    },
-    {
-      "name": "platform",
-      "version": "3.1.6",
-      "dependencies": []
     },
     {
       "name": "xdg_directories",

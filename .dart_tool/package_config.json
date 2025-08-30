@@ -242,6 +242,12 @@
       "languageVersion": "3.0"
     },
     {
+      "name": "flutter_foreground_task",
+      "rootUri": "file:///C:/Users/LENOVO/AppData/Local/Pub/Cache/hosted/pub.dev/flutter_foreground_task-9.1.0",
+      "packageUri": "lib/",
+      "languageVersion": "3.4"
+    },
+    {
       "name": "flutter_inappwebview",
       "rootUri": "file:///C:/Users/LENOVO/AppData/Local/Pub/Cache/hosted/pub.dev/flutter_inappwebview-6.1.5",
       "packageUri": "lib/",
@@ -374,6 +380,12 @@
       "languageVersion": "3.0"
     },
     {
+      "name": "installed_apps",
+      "rootUri": "file:///C:/Users/LENOVO/AppData/Local/Pub/Cache/hosted/pub.dev/installed_apps-1.6.0",
+      "packageUri": "lib/",
+      "languageVersion": "3.0"
+    },
+    {
       "name": "intl",
       "rootUri": "file:///C:/Users/LENOVO/AppData/Local/Pub/Cache/hosted/pub.dev/intl-0.20.2",
       "packageUri": "lib/",
@@ -444,6 +456,12 @@
       "rootUri": "file:///C:/Users/LENOVO/AppData/Local/Pub/Cache/hosted/pub.dev/mime-2.0.0",
       "packageUri": "lib/",
       "languageVersion": "3.2"
+    },
+    {
+      "name": "notification_listener_service",
+      "rootUri": "file:///C:/Users/LENOVO/AppData/Local/Pub/Cache/hosted/pub.dev/notification_listener_service-0.3.4",
+      "packageUri": "lib/",
+      "languageVersion": "2.16"
     },
     {
       "name": "octo_image",
