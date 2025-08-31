@@ -2,7 +2,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
@@ -80,7 +79,7 @@ Future<void> main() async {
   }
 
   /// Inisialisasi ForegroundTask (wajib sebelum runApp)
-  await FlutterForegroundTask.init(
+  FlutterForegroundTask.init(
     androidNotificationOptions: AndroidNotificationOptions(
       channelId: 'myxcreate_fg',
       channelName: 'MyXCreate Background',
@@ -93,14 +92,14 @@ Future<void> main() async {
       showNotification: false,
       playSound: false,
     ),
-    foregroundTaskOptions: const ForegroundTaskOptions(
-      interval: 5000,
-      autoRunOnBoot: false,
-      autoRunOnMyPackageReplaced: false,
-      allowWakeLock: true,
-      allowWifiLock: false,
-    ),
-  );
+    foregroundTaskOptions: ForegroundTaskOptions(
+          autoRunOnBoot: false,
+          autoRunOnMyPackageReplaced: false,
+          allowWakeLock: true,
+          allowWifiLock: false,
+          eventAction: ForegroundTaskEventAction.nothing(),
+        ),
+      );
 
   Widget initialPage = const LoginPage();
   try {
