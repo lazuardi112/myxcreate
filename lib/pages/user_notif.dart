@@ -5,9 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:installed_apps/app_info.dart';
 import 'package:notification_listener_service/notification_event.dart';
-import '../services/notification_capture.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
+
+import '../services/notification_capture.dart';
 
 class UserNotifPage extends StatefulWidget {
   const UserNotifPage({Key? key}) : super(key: key);
@@ -18,6 +20,10 @@ class UserNotifPage extends StatefulWidget {
 
 class _UserNotifPageState extends State<UserNotifPage>
     with SingleTickerProviderStateMixin {
+  static const String _keyCaptured = 'captured_notifs';
+  static const String _keySelectedPkgs = 'selected_packages';
+  static const String _keyWebhook = 'notif_webhook_url';
+
   late TabController _tab;
   List<AppInfo> _apps = [];
   List<AppInfo> _filteredApps = [];
@@ -37,32 +43,44 @@ class _UserNotifPageState extends State<UserNotifPage>
     _searchCtrl.addListener(_applySearch);
     _initAll();
 
-    // Subscribe ke notifikasi dan langsung tampil di app
+    // Live stream: setiap event masuk akan disimpan & ditampilkan
     _notifSub = NotificationListenerService.notificationsStream.listen((event) async {
       if (event.packageName == null) return;
-      final prefsSelected = await NotifService.getSelectedPackages();
-      if (prefsSelected.contains(event.packageName)) {
-        // Simpan ke captured local
-        await NotifService.addCaptured({
-          "package": event.packageName,
-          "appName": event.appName ?? event.packageName,
-          "title": event.title ?? "",
-          "content": event.content ?? "",
-          "timestamp": DateTime.now().toIso8601String(),
-        });
 
-        // Refresh tampilan
-        await _refreshCaptured();
+      // cek apakah package dicentang user
+      final selected = await _getSelectedPackages();
+      if (!selected.contains(event.packageName)) return;
 
-        // Kirim ke webhook jika ada
-        await _sendToWebhook(event);
-      }
+      // buat record dan simpan
+      final rec = <String, dynamic>{
+        'package': event.packageName,
+        'appName': event.appName ?? event.packageName,
+        'title': event.title ?? '',
+        'content': event.content ?? '',
+        'timestamp': DateTime.now().toIso8601String(),
+      };
+      await _addCaptured(rec);
+
+      // refresh UI
+      await _loadCapturedIntoState();
+
+      // kirim ke webhook (jika ada)
+      await _postToWebhook(rec);
+    }, onError: (err) {
+      debugPrint('Stream error: $err');
     });
   }
 
   Future<void> _initAll() async {
-    await NotifService.ensureStarted();
-    await _loadData();
+    // pastikan NotifService (yang meng-handle foreground task & listener) di-init
+    try {
+      await NotifService.ensureStarted();
+    } catch (e) {
+      debugPrint('ensureStarted error: $e');
+    }
+
+    await _loadAppsAndPrefs();
+
     final granted = await NotificationListenerService.isPermissionGranted();
     final running = await FlutterForegroundTask.isRunningService;
     setState(() {
@@ -71,32 +89,87 @@ class _UserNotifPageState extends State<UserNotifPage>
     });
   }
 
-  Future<void> _loadData() async {
-    final apps = await NotifService.getInstalledApps();
-    final selected = await NotifService.getSelectedPackages();
-    final captured = await NotifService.getCaptured();
-    final webhook = await NotifService.getWebhook() ?? '';
+  // ----- SharedPreferences helpers (local) -----
+  Future<List<String>> _getSelectedPackages() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList(_keySelectedPkgs) ?? [];
+  }
 
-    final Map<String, String> appMap = { for (final a in apps) a.packageName: a.name };
+  Future<void> _setSelectedPackages(List<String> list) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_keySelectedPkgs, list);
+  }
 
-    final enriched = captured.map((m) {
-      final pkg = m['package']?.toString() ?? '';
-      final enrichedMap = Map<String, dynamic>.from(m);
-      enrichedMap['appName'] = (m['appName']?.toString().isNotEmpty ?? false)
-          ? m['appName']
-          : (appMap[pkg] ?? pkg);
-      return enrichedMap;
+  Future<void> _addCaptured(Map<String, dynamic> rec) async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList(_keyCaptured) ?? [];
+    list.insert(0, jsonEncode(rec));
+    if (list.length > 500) list.removeRange(500, list.length);
+    await prefs.setStringList(_keyCaptured, list);
+  }
+
+  Future<List<Map<String, dynamic>>> _getCapturedFromPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList(_keyCaptured) ?? [];
+    return list.map((s) {
+      try {
+        return jsonDecode(s) as Map<String, dynamic>;
+      } catch (_) {
+        return <String, dynamic>{};
+      }
     }).toList();
+  }
+
+  Future<void> _clearCapturedPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_keyCaptured, []);
+  }
+
+  Future<void> _removeCapturedAtPrefs(int index) async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList(_keyCaptured) ?? [];
+    if (index >= 0 && index < list.length) {
+      list.removeAt(index);
+      await prefs.setStringList(_keyCaptured, list);
+    }
+  }
+
+  Future<String?> _getWebhook() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_keyWebhook);
+  }
+
+  Future<void> _setWebhook(String? url) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (url == null || url.isEmpty) {
+      await prefs.remove(_keyWebhook);
+    } else {
+      await prefs.setString(_keyWebhook, url);
+    }
+  }
+
+  // ----- Load apps & prefs into UI -----
+  Future<void> _loadAppsAndPrefs() async {
+    final apps = await NotifService.getInstalledApps();
+    final selected = await _getSelectedPackages();
+    final captured = await _getCapturedFromPrefs();
+    final webhook = await _getWebhook() ?? '';
 
     setState(() {
       _apps = apps;
       _filteredApps = apps;
       _selectedPkgs = selected;
-      _captured = enriched;
+      _captured = captured;
       _webhookCtrl.text = webhook;
     });
   }
 
+  Future<void> _loadCapturedIntoState() async {
+    final captured = await _getCapturedFromPrefs();
+    setState(() => _captured = captured);
+  }
+
+  // ----- UI actions -----
   void _applySearch() {
     final q = _searchCtrl.text.toLowerCase();
     setState(() {
@@ -105,34 +178,49 @@ class _UserNotifPageState extends State<UserNotifPage>
     });
   }
 
-  Future<void> _toggle(String pkg) async {
-    await NotifService.togglePackage(pkg);
-    final selected = await NotifService.getSelectedPackages();
-    setState(() => _selectedPkgs = selected);
-  }
-
-  Future<void> _refreshCaptured() async {
-    final data = await NotifService.getCaptured();
-    final Map<String, String> appMap = { for (final a in _apps) a.packageName: a.name };
-    final enriched = data.map((m) {
-      final pkg = m['package']?.toString() ?? '';
-      final enrichedMap = Map<String, dynamic>.from(m);
-      enrichedMap['appName'] = (m['appName']?.toString().isNotEmpty ?? false)
-          ? m['appName']
-          : (appMap[pkg] ?? pkg);
-      return enrichedMap;
-    }).toList();
-    setState(() => _captured = enriched);
+  Future<void> _togglePackage(String pkg) async {
+    final list = await _getSelectedPackages();
+    if (list.contains(pkg)) {
+      list.remove(pkg);
+    } else {
+      list.add(pkg);
+    }
+    await _setSelectedPackages(list);
+    setState(() => _selectedPkgs = list);
   }
 
   Future<void> _startService() async {
-    await NotifService.startForegroundService();
+    try {
+      // Pastikan NotifService menginisialisasi foreground task & listener
+      await NotifService.ensureStarted();
+    } catch (e) {
+      debugPrint('NotifService.ensureStarted() error: $e');
+    }
+
+    // Jika plugin flutter_foreground_task belum jalan, coba start service ringan
+    try {
+      if (!await FlutterForegroundTask.isRunningService) {
+        await FlutterForegroundTask.startService(
+          notificationTitle: 'MyXCreate aktif',
+          notificationText: 'Menangkap notifikasi di latar belakang',
+          callback: NotifService.startCallbackEntryPoint, // jika Anda punya entrypoint di NotifService
+        );
+      }
+    } catch (e) {
+      // beberapa versi plugin memerlukan cara berbeda; ignore error jika sudah di-handle oleh NotifService
+      debugPrint('startService error (ignored): $e');
+    }
+
     final running = await FlutterForegroundTask.isRunningService;
     setState(() => _serviceRunning = running);
   }
 
   Future<void> _stopService() async {
-    await NotifService.stopForegroundService();
+    try {
+      await FlutterForegroundTask.stopService();
+    } catch (e) {
+      debugPrint('stopService error: $e');
+    }
     final running = await FlutterForegroundTask.isRunningService;
     setState(() => _serviceRunning = running);
   }
@@ -144,37 +232,32 @@ class _UserNotifPageState extends State<UserNotifPage>
   }
 
   Future<void> _deleteCapturedAt(int index) async {
-    await NotifService.removeCapturedAt(index);
-    await _refreshCaptured();
+    await _removeCapturedAtPrefs(index);
+    await _loadCapturedIntoState();
   }
 
-  /// Kirim notifikasi ke webhook
-  Future<void> _sendToWebhook(ServiceNotificationEvent event) async {
+  Future<void> _clearCaptured() async {
+    await _clearCapturedPrefs();
+    await _loadCapturedIntoState();
+  }
+
+  Future<void> _postToWebhook(Map<String, dynamic> rec) async {
     final url = _webhookCtrl.text.trim();
     if (url.isEmpty) return;
 
-    final appName = (event.appName != null && event.appName!.isNotEmpty)
-        ? event.appName!
-        : (event.packageName ?? 'unknown');
-
-    final title = (event.title ?? '').toString();
-    final text = (event.content ?? '').toString();
-
-    final data = {
-      "app": appName,
-      "title": title,
-      "text": text,
+    final body = {
+      "app": rec['appName'] ?? rec['package'],
+      "title": rec['title'] ?? '',
+      "text": rec['content'] ?? '',
     };
 
     try {
-      final resp = await http.post(
-        Uri.parse(url),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode(data),
-      );
-      debugPrint('Webhook status: ${resp.statusCode}');
+      final resp = await http.post(Uri.parse(url),
+          headers: {"Content-Type": "application/json"},
+          body: jsonEncode(body));
+      debugPrint('Webhook POST status: ${resp.statusCode}');
     } catch (e) {
-      debugPrint('⚠️ Gagal kirim ke webhook: $e');
+      debugPrint('Webhook POST error: $e');
     }
   }
 
@@ -212,8 +295,7 @@ class _UserNotifPageState extends State<UserNotifPage>
           icon: const Icon(Icons.refresh),
           label: const Text('Muat ulang'),
           onPressed: () async {
-            await _loadData();
-            await _refreshCaptured();
+            await _loadAppsAndPrefs();
             final running = await FlutterForegroundTask.isRunningService;
             final granted = await NotificationListenerService.isPermissionGranted();
             setState(() {
@@ -270,9 +352,8 @@ class _UserNotifPageState extends State<UserNotifPage>
                       const SizedBox(width: 8),
                       ElevatedButton(
                         onPressed: () async {
-                          await NotifService.setWebhook(_webhookCtrl.text.trim());
-                          if (mounted) ScaffoldMessenger.of(context)
-                              .showSnackBar(const SnackBar(content: Text('Webhook disimpan')));
+                          await _setWebhook(_webhookCtrl.text.trim());
+                          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Webhook disimpan')));
                         },
                         child: const Text('Simpan'),
                       ),
@@ -281,9 +362,7 @@ class _UserNotifPageState extends State<UserNotifPage>
                   const SizedBox(height: 12),
                   TextField(
                     controller: _searchCtrl,
-                    decoration: const InputDecoration(
-                        prefixIcon: Icon(Icons.search),
-                        hintText: 'Cari aplikasi...'),
+                    decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Cari aplikasi...'),
                   ),
                   const SizedBox(height: 8),
                   Expanded(
@@ -298,12 +377,10 @@ class _UserNotifPageState extends State<UserNotifPage>
                                 color: enabled ? Colors.deepPurple.shade50 : null,
                                 margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                                 child: ListTile(
-                                  leading: a.icon != null
-                                      ? Image.memory(a.icon!, width: 36, height: 36)
-                                      : const Icon(Icons.apps, color: Colors.deepPurple),
+                                  leading: a.icon != null ? Image.memory(a.icon!, width: 36, height: 36) : const Icon(Icons.apps, color: Colors.deepPurple),
                                   title: Text(a.name),
                                   subtitle: Text(a.packageName, style: const TextStyle(fontSize: 12)),
-                                  trailing: Switch(value: enabled, onChanged: (_) => _toggle(a.packageName)),
+                                  trailing: Switch(value: enabled, onChanged: (_) => _togglePackage(a.packageName)),
                                 ),
                               );
                             },
@@ -315,7 +392,7 @@ class _UserNotifPageState extends State<UserNotifPage>
 
             // --- CAPTURED TAB ---
             RefreshIndicator(
-              onRefresh: _refreshCaptured,
+              onRefresh: _loadCapturedIntoState,
               child: _captured.isEmpty
                   ? ListView(
                       children: [
@@ -344,14 +421,13 @@ class _UserNotifPageState extends State<UserNotifPage>
                                 ElevatedButton.icon(
                                   style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade400),
                                   onPressed: () async {
-                                    await NotifService.clearCaptured();
-                                    await _refreshCaptured();
+                                    await _clearCaptured();
                                   },
                                   icon: const Icon(Icons.delete_sweep),
                                   label: const Text('Hapus semua'),
                                 ),
                                 const SizedBox(width: 12),
-                                OutlinedButton.icon(onPressed: _refreshCaptured, icon: const Icon(Icons.refresh), label: const Text('Muat ulang'))
+                                OutlinedButton.icon(onPressed: _loadCapturedIntoState, icon: const Icon(Icons.refresh), label: const Text('Muat ulang'))
                               ],
                             ),
                           );
@@ -396,8 +472,6 @@ class _UserNotifPageState extends State<UserNotifPage>
   }
 }
 
-// --- Extension agar ServiceNotificationEvent punya appName & text ---
-extension ServiceNotifExt on ServiceNotificationEvent {
-  String? get appName => this.packageName;
-  String? get text => this.content ?? this.title;
+extension on ServiceNotificationEvent {
+  get appName => null;
 }

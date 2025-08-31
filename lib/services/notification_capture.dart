@@ -20,6 +20,8 @@ class NotifService {
 
   static var stream;
 
+  static var startCallbackEntryPoint;
+
   /// Inisialisasi dan start service (panggil dari main / UI)
   static Future<void> ensureStarted() async {
     if (kIsWeb) return;
