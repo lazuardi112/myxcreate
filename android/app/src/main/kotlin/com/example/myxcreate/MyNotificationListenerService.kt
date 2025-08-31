@@ -1,4 +1,4 @@
-package com.xample.myxcreate
+package com.example.myxcreate
 
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
