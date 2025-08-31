@@ -96,7 +96,7 @@ Future<void> main() async {
       autoRunOnBoot: false,
       autoRunOnMyPackageReplaced: false,
       allowWakeLock: true,
-      allowWifiLock: false, 
+      allowWifiLock: false,
       eventAction: ForegroundTaskEventAction.nothing(),
     ),
   );
@@ -176,17 +176,25 @@ class MyApp extends StatefulWidget {
   State<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends State<MyApp> {
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   final List<ServiceNotificationEvent> _preview = [];
   StreamSubscription<ServiceNotificationEvent>? _sub;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _requestNotifPermission();
   }
 
-  /// Minta izin notifikasi langsung saat startup
+  /// Lifecycle observer → cek ulang izin saat resume (user balik dari Settings)
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkAndRestartListener();
+    }
+  }
+
   Future<void> _requestNotifPermission() async {
     final granted = await NotificationListenerService.isPermissionGranted();
     if (!granted) {
@@ -199,8 +207,17 @@ class _MyAppState extends State<MyApp> {
     _initNotifListener();
   }
 
+  Future<void> _checkAndRestartListener() async {
+    final granted = await NotificationListenerService.isPermissionGranted();
+    if (granted && _sub == null) {
+      debugPrint("🔄 Restart listener setelah izin diberikan");
+      _initNotifListener();
+    }
+  }
+
   Future<void> _initNotifListener() async {
     try {
+      _sub?.cancel(); // pastikan tidak double
       _sub = NotificationListenerService.notificationsStream.listen((event) {
         if (!mounted) return;
         notificationStreamController.add(event);
@@ -223,6 +240,7 @@ class _MyAppState extends State<MyApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _sub?.cancel();
     super.dispose();
   }
@@ -356,8 +374,10 @@ class _CustomSplashPageState extends State<CustomSplashPage> {
   void initState() {
     super.initState();
     Timer(const Duration(seconds: 2), () {
-      Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => widget.nextPage));
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => widget.nextPage));
+      }
     });
   }
 
