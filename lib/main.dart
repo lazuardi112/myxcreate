@@ -36,28 +36,27 @@ const String apiUrl = "https://api.xcreate.my.id/myxcreate/cek_update_apk.php";
 /// Global navigator key
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-/// Global notifikasi yang didapat (in-memory)
+/// Global notifikasi (in-memory)
 final List<ServiceNotificationEvent> globalNotifications = [];
 
-/// Notifier agar UI bisa rebuild saat ada notifikasi masuk
+/// Notifier agar UI bisa rebuild
 final ValueNotifier<int> globalNotifCounter = ValueNotifier<int>(0);
 
 StreamSubscription<ServiceNotificationEvent>? _notifSubscription;
 
-/// Global log (persisted)
+/// Global log
 final List<String> notifLogs = [];
 
-/// Notifier logs change
+/// Notifier logs
 final ValueNotifier<int> notifLogCounter = ValueNotifier<int>(0);
 
-/// Tambah log helper (auto-persist)
+/// Tambah log helper
 Future<void> addNotifLog(String message) async {
   final time = DateTime.now().toIso8601String();
   final entry = "[$time] $message";
   notifLogs.insert(0, entry);
   if (notifLogs.length > 500) notifLogs.removeLast();
   notifLogCounter.value++;
-  // persist
   try {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('notifLogs', notifLogs);
@@ -66,11 +65,10 @@ Future<void> addNotifLog(String message) async {
   }
 }
 
-/// Persist minimal notification summary to prefs (to survive restart)
+/// Persist minimal summary
 Future<void> _persistNotifications() async {
   try {
     final prefs = await SharedPreferences.getInstance();
-    // Save only minimal info to avoid heavy payloads
     final store = globalNotifications
         .take(200)
         .map((e) => jsonEncode({
@@ -86,17 +84,13 @@ Future<void> _persistNotifications() async {
   }
 }
 
-/// Restore persisted notifications at startup (non-blocking)
+/// Restore persisted
 Future<void> _restoreNotificationsFromPrefs() async {
   try {
     final prefs = await SharedPreferences.getInstance();
     final stored = prefs.getStringList('savedNotifications') ?? [];
-    if (stored.isNotEmpty) {
-      // we only restore as simple placeholders; ServiceNotificationEvent cannot be reconstructed easily
-      // we keep globalNotifications length as indicator and keep a lightweight summary in notifLogs
-      for (final s in stored.reversed) {
-        addNotifLog("↺ restored notification: $s");
-      }
+    for (final s in stored.reversed) {
+      addNotifLog("↺ restored notification: $s");
     }
 
     final savedLogs = prefs.getStringList('notifLogs') ?? [];
@@ -121,20 +115,18 @@ Future<void> main() async {
     return;
   }
 
-  // Preserve native splash while we init
   FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
 
-  // restore persisted logs/notifications (non-blocking)
   await _restoreNotificationsFromPrefs();
 
-  // Try to init notification listener (safe)
+  // Jangan paksa start listener kalau izin belum ada
   await _safeInitNotificationListener();
 
   Widget initialPage = const LoginPage();
   try {
     initialPage = await _checkLoginAndVersion();
   } catch (e, stack) {
-    debugPrint('❌ Error saat inisialisasi: $e\n$stack');
+    debugPrint('❌ Error init: $e\n$stack');
   }
 
   runApp(MyApp(initialPage: initialPage));
@@ -142,7 +134,7 @@ Future<void> main() async {
   FlutterNativeSplash.remove();
 }
 
-/// Safe wrapper that never throws and logs errors
+/// Safe wrapper
 Future<void> _safeInitNotificationListener() async {
   try {
     await _initNotificationListener();
@@ -152,18 +144,14 @@ Future<void> _safeInitNotificationListener() async {
   }
 }
 
-/// Exposed function UI can call to request/check permission
+/// UI call → request permission
 Future<bool> checkAndRequestNotifPermission() async {
   try {
     final has = await NotificationListenerService.isPermissionGranted();
     if (has) return true;
 
-    // requestPermission may open system settings; calling it is fine — but app can be paused/killed by OS.
     final granted = await NotificationListenerService.requestPermission();
-    // After returning, try to (re)start listener
-    if (granted) {
-      await _restartListenerSafely();
-    }
+    // ⚠️ Jangan langsung restart listener → tunggu saat resume
     return granted;
   } catch (e) {
     log("❌ checkAndRequestNotifPermission error: $e");
@@ -171,7 +159,7 @@ Future<bool> checkAndRequestNotifPermission() async {
   }
 }
 
-/// Restart listener safely (cancel + init)
+/// Restart listener safely
 Future<void> _restartListenerSafely() async {
   try {
     await _notifSubscription?.cancel();
@@ -182,20 +170,17 @@ Future<void> _restartListenerSafely() async {
   }
 }
 
-/// Init notification listener (only starts if permission granted)
+/// Init notification listener
 Future<void> _initNotificationListener() async {
-  // IMPORTANT: do not crash here; catch all exceptions
   try {
     final hasPermission = await NotificationListenerService.isPermissionGranted();
     if (!hasPermission) {
-      log("🔕 Notification listener permission not granted yet. Listener will not start.");
+      log("🔕 Listener permission belum diberikan.");
       return;
     }
 
-    // cancel previous subscription
     await _notifSubscription?.cancel();
 
-    // Subscribe
     _notifSubscription = NotificationListenerService.notificationsStream.listen(
       (ServiceNotificationEvent? event) async {
         if (event == null) return;
@@ -204,15 +189,12 @@ Future<void> _initNotificationListener() async {
           final title = event.title ?? '-';
           final content = event.content ?? '-';
 
-          // store event (in-memory limited)
           globalNotifications.insert(0, event);
           if (globalNotifications.length > 500) globalNotifications.removeLast();
-          globalNotifCounter.value++; // notify UI
+          globalNotifCounter.value++;
 
-          // persist summary (in background, non-blocking)
           _persistNotifications();
 
-          // Post to user URL if configured and app selected
           try {
             final prefs = await SharedPreferences.getInstance();
             final selectedApps = prefs.getStringList('selectedApps') ?? [];
@@ -235,13 +217,12 @@ Future<void> _initNotificationListener() async {
             await addNotifLog("❌ POST error → ${event.packageName} | $e");
           }
         } catch (e) {
-          log("❌ error handling incoming notification event: $e");
+          log("❌ handle notif error: $e");
         }
       },
       onError: (err) async {
         log("❌ notificationsStream error: $err");
         await addNotifLog("❌ Stream error: $err");
-        // try to recover later (do not throw)
       },
       cancelOnError: false,
     );
@@ -253,7 +234,7 @@ Future<void> _initNotificationListener() async {
   }
 }
 
-/// Cek login & versi (tidak diubah)
+/// Cek login & versi
 Future<Widget> _checkLoginAndVersion() async {
   final prefs = await SharedPreferences.getInstance();
   final packageInfo = await PackageInfo.fromPlatform();
@@ -314,7 +295,7 @@ bool _isVersionLower(String current, String latest) {
   return false;
 }
 
-/// MyApp (tidak banyak berubah, namun on resume kita try restart listener)
+/// MyApp
 class MyApp extends StatefulWidget {
   final Widget initialPage;
   const MyApp({super.key, required this.initialPage});
@@ -339,11 +320,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // when app resumes, try to start listener if permission now available
     if (state == AppLifecycleState.resumed) {
-      log("🔄 App resumed → try start listener if allowed");
-      // call but don't await (safe)
-      _safeInitNotificationListener();
+      log("🔄 App resumed → try restart listener");
+      _safeInitNotificationListener(); // aman, tidak crash
     }
   }
 
@@ -383,7 +362,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 }
 
-/// DeepLinkWrapper (sama seperti sebelumnya)
+/// DeepLinkWrapper
 class DeepLinkWrapper extends StatefulWidget {
   final Widget initialPage;
   const DeepLinkWrapper({super.key, required this.initialPage});
@@ -400,9 +379,7 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
   void initState() {
     super.initState();
     _appLinks = AppLinks();
-
     _initUri();
-
     _appLinks.uriLinkStream.listen((uri) {
       _handleLink(uri);
     });
