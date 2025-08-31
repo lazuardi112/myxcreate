@@ -5,25 +5,22 @@ import 'dart:developer';
 import 'package:flutter/foundation.dart' show kIsWeb, Uint8List;
 import 'package:flutter/material.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
-import 'package:myxcreate/menu_fitur/midtrans/koneksi_midtrans.dart';
-import 'package:myxcreate/menu_fitur/midtrans/riwayat.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:http/http.dart' as http;
 import 'package:app_links/app_links.dart';
-import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
-// NOTIFICATION packages
+// Notification plugin
 import 'package:notification_listener_service/notification_event.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
 
+// App pages / services (sesuaikan path)
 import 'auth/login.dart';
 import 'main_page.dart';
 import 'update_page.dart';
 import 'store/detail.dart';
 import 'web.dart';
 import 'pages/user_notif.dart';
-import 'services/notification_capture.dart';
 import 'menu_fitur/dashboard_pembayaran.dart';
 import 'menu_fitur/riwayat_transfer.dart';
 import 'menu_fitur/pembayaran_service.dart';
@@ -32,9 +29,18 @@ import 'menu_fitur/koneksi_transfer_saldo.dart';
 import 'menu_fitur/upload_produk.dart';
 import 'store/store.dart';
 import 'xcode_edit/xcodeedit.dart';
+import 'menu_fitur/midtrans/koneksi_midtrans.dart';
+import 'menu_fitur/midtrans/riwayat.dart';
 
 const String apiUrl = "https://api.xcreate.my.id/myxcreate/cek_update_apk.php";
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+// Global broadcast controller supaya halaman lain bisa listen notifikasi real-time
+final StreamController<ServiceNotificationEvent> notificationStreamController =
+    StreamController<ServiceNotificationEvent>.broadcast();
+
+Stream<ServiceNotificationEvent> get notificationStream =>
+    notificationStreamController.stream;
 
 class MainOverlayNotification {
   final String? title;
@@ -54,8 +60,10 @@ class MainOverlayNotification {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // preserve splash until runApp ready
-  FlutterNativeSplash.preserve(widgetsBinding: WidgetsFlutterBinding.ensureInitialized());
+
+  // Preserve native splash hingga runApp siap
+  FlutterNativeSplash.preserve(
+      widgetsBinding: WidgetsFlutterBinding.ensureInitialized());
 
   if (kIsWeb) {
     runApp(const MaterialApp(
@@ -72,24 +80,34 @@ Future<void> main() async {
     debugPrint('❌ Error inisialisasi: $e\n$stack');
   }
 
-  runApp(
-    WithForegroundTask(
-      child: MyApp(initialPage: initialPage),
-    ),
-  );
+  runApp(MyApp(initialPage: initialPage));
 
-  // remove native splash
   FlutterNativeSplash.remove();
 
-  // Start notification listener in background (NotifService ensures foreground task + subscription)
-  Future.microtask(() async {
-    try {
-      await NotifService.ensureStarted();
-      log("✅ NotifService started");
-    } catch (e, st) {
-      debugPrint('⚠️ Gagal start NotifService: $e\n$st');
-    }
-  });
+  // Attach notification plugin stream
+  _attachPluginStream();
+}
+
+void _attachPluginStream() {
+  try {
+    NotificationListenerService.notificationsStream.listen(
+      (ServiceNotificationEvent? e) {
+        if (e == null) return;
+        try {
+          notificationStreamController.add(e);
+          log('Forwarded notification: pkg=${e.packageName} title=${e.title}');
+        } catch (ex) {
+          debugPrint('❌ Failed to forward notification: $ex');
+        }
+      },
+      onError: (err) {
+        debugPrint('Stream error (notification plugin): $err');
+      },
+      cancelOnError: false,
+    );
+  } catch (e) {
+    debugPrint('Failed to attach plugin stream: $e');
+  }
 }
 
 Future<Widget> _checkLoginAndVersion() async {
@@ -107,7 +125,9 @@ Future<Widget> _checkLoginAndVersion() async {
       final tanggalUpdate = (data['tanggalUpdate'] ?? data['tanggal_update'] ?? "-").toString();
       final downloadUrl = (data['url_apk'] ?? data['url_download'] ?? "").toString();
 
-      if (latestVersion.isNotEmpty && downloadUrl.isNotEmpty && _isVersionLower(localVersion, latestVersion)) {
+      if (latestVersion.isNotEmpty &&
+          downloadUrl.isNotEmpty &&
+          _isVersionLower(localVersion, latestVersion)) {
         return UpdatePage(
           versi: latestVersion,
           changelog: changelog,
@@ -149,56 +169,25 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  // gunakan ServiceNotificationEvent agar sesuai dengan plugin
-  final List<ServiceNotificationEvent> _events = [];
-  StreamSubscription<ServiceNotificationEvent>? _notifSub;
+  final List<ServiceNotificationEvent> _previewEvents = [];
+  StreamSubscription<ServiceNotificationEvent>? _previewSub;
 
   @override
   void initState() {
     super.initState();
-    _startNotifListener();
-  }
-
-  Future<void> _startNotifListener() async {
-    // Pastikan NotifService (foreground task + listener) sudah di-init
-    try {
-      await NotifService.ensureStarted();
-    } catch (e) {
-      debugPrint('⚠️ ensureStarted error: $e');
-    }
-
-    // Jika sebelumnya ada subscription, batalkan
-    await _notifSub?.cancel();
-
-    // Subscribe langsung ke stream plugin supaya event tampil real-time di app
-    _notifSub = NotificationListenerService.notificationsStream.listen((event) async {
-      if (event == null) return;
-      // optional: filter only selected packages — jika mau, uncomment berikut:
-      // final selected = await NotifService.getSelectedPackages();
-      // if (!selected.contains(event.packageName)) return;
-
-      // tambahkan ke list UI (tampilan overlay)
+    _previewSub = notificationStream.listen((event) {
       setState(() {
-        // insert di depan supaya event terbaru di atas
-        _events.insert(0, event);
-        // batasi panjang overlay list supaya tidak membludak
-        if (_events.length > 50) _events.removeRange(50, _events.length);
+        _previewEvents.insert(0, event);
+        if (_previewEvents.length > 5) _previewEvents.removeRange(5, _previewEvents.length);
       });
-
-      // log debug
-      log("📩 Notification received: pkg=${event.packageName}, title=${event.title}, content=${event.content}");
-
-      // NotifService._onNotification sudah menyimpan ke SharedPreferences dan mengirim webhook
-      // (karena ensureStarted mendaftarkan listener). Jika Anda ingin melakukan POST di sini juga,
-      // Anda bisa menambahkan kode POST sendiri.
-    }, onError: (err) {
-      debugPrint('Stream error: $err');
-    }, cancelOnError: false);
+    }, onError: (e) {
+      debugPrint('preview stream error: $e');
+    });
   }
 
   @override
   void dispose() {
-    _notifSub?.cancel();
+    _previewSub?.cancel();
     super.dispose();
   }
 
@@ -206,7 +195,7 @@ class _MyAppState extends State<MyApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       navigatorKey: navigatorKey,
-      title: "MyXCreate",
+      title: 'MyXCreate',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         primarySwatch: Colors.deepPurple,
@@ -219,13 +208,12 @@ class _MyAppState extends State<MyApp> {
       home: Stack(
         children: [
           DeepLinkWrapper(initialPage: widget.initialPage),
-          // overlay panel di bawah untuk menampilkan event terbaru (ringan, dismissible)
-          if (_events.isNotEmpty)
+          if (_previewEvents.isNotEmpty)
             Positioned(
-              bottom: 8,
-              left: 8,
-              right: 8,
-              child: _buildOverlayCard(),
+              bottom: 12,
+              left: 12,
+              right: 12,
+              child: _buildPreviewCard(),
             ),
         ],
       ),
@@ -247,56 +235,27 @@ class _MyAppState extends State<MyApp> {
     );
   }
 
-  Widget _buildOverlayCard() {
-    // tampilkan maksimal 3 event terbaru ringkas
-    final showCount = _events.length < 3 ? _events.length : 3;
+  Widget _buildPreviewCard() {
+    final e = _previewEvents.first;
     return Card(
       elevation: 6,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Container(
-        padding: const EdgeInsets.all(8),
-        color: Colors.white,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                const Expanded(child: Text('Notifikasi terbaru', style: TextStyle(fontWeight: FontWeight.bold))),
-                IconButton(
-                  icon: const Icon(Icons.clear),
-                  onPressed: () {
-                    setState(() {
-                      _events.clear();
-                    });
-                  },
-                ),
-              ],
-            ),
-            SizedBox(
-              height: 64.0 * showCount,
-              child: ListView.builder(
-                itemCount: showCount,
-                itemBuilder: (_, i) {
-                  final e = _events[i];
-                  return ListTile(
-                    leading: e.appIcon == null ? const SizedBox.shrink() : Image.memory(e.appIcon!, width: 36, height: 36),
-                    title: Text(e.title ?? 'No title', maxLines: 1, overflow: TextOverflow.ellipsis),
-                    subtitle: Text(e.content ?? 'No content', maxLines: 1, overflow: TextOverflow.ellipsis),
-                    onTap: () {
-                      // buka halaman user_notif kalau diklik
-                      navigatorKey.currentState?.pushNamed('/user_notif');
-                    },
-                  );
-                },
-              ),
-            ),
-          ],
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      child: ListTile(
+        leading: e.appIcon == null ? null : Image.memory(e.appIcon!, width: 40, height: 40),
+        title: Text(e.title ?? 'No title', maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Text(e.content ?? 'No content', maxLines: 1, overflow: TextOverflow.ellipsis),
+        trailing: IconButton(
+          icon: const Icon(Icons.chevron_right),
+          onPressed: () {
+            navigatorKey.currentState?.pushNamed('/user_notif');
+          },
         ),
       ),
     );
   }
 }
 
+// DeepLink + Splash
 class DeepLinkWrapper extends StatefulWidget {
   final Widget initialPage;
   const DeepLinkWrapper({super.key, required this.initialPage});
@@ -314,7 +273,7 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
     super.initState();
     _appLinks = AppLinks();
     _initUri();
-    _appLinks.uriLinkStream.listen(_handleLink);
+    _appLinks.uriLinkStream.listen(_handleLink, onError: (e) => debugPrint('deep link error: $e'));
   }
 
   Future<void> _initUri() async {
@@ -323,14 +282,18 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
   }
 
   void _handleLink(Uri uri) {
-    if (uri.host == "xcreate.my.id") {
-      final idProduk = uri.queryParameters['idproduk'];
-      if (idProduk != null) {
-        navigatorKey.currentState?.pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => DetailPage(idProduk: idProduk)),
-          (_) => false,
-        );
+    try {
+      if (uri.host == "xcreate.my.id") {
+        final idProduk = uri.queryParameters['idproduk'];
+        if (idProduk != null) {
+          navigatorKey.currentState?.pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => DetailPage(idProduk: idProduk)),
+            (_) => false,
+          );
+        }
       }
+    } catch (e) {
+      debugPrint('deep link handle error: $e');
     }
   }
 

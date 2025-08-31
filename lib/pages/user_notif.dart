@@ -1,116 +1,155 @@
 // lib/pages/user_notif.dart
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:installed_apps/installed_apps.dart';
 import 'package:installed_apps/app_info.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:notification_listener_service/notification_event.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:http/http.dart' as http;
 
-import '../services/notification_capture.dart';
+/// NotificationManager: inisialisasi plugin, subscribe stream, simpan ke prefs, broadcast
+class NotificationManager {
+  static const _kSelected = 'notif_selected_pkgs';
+  static const _kCaptured = 'notif_captured';
+  static const _kWebhook = 'notif_webhook_url';
 
-class UserNotifPage extends StatefulWidget {
-  const UserNotifPage({Key? key}) : super(key: key);
+  static final StreamController<Map<String, dynamic>> _streamController =
+      StreamController<Map<String, dynamic>>.broadcast();
 
-  @override
-  State<UserNotifPage> createState() => _UserNotifPageState();
-}
+  static Stream<Map<String, dynamic>> get stream => _streamController.stream;
 
-class _UserNotifPageState extends State<UserNotifPage>
-    with SingleTickerProviderStateMixin {
-  static const String _keyCaptured = 'captured_notifs';
-  static const String _keySelectedPkgs = 'selected_packages';
-  static const String _keyWebhook = 'notif_webhook_url';
+  static StreamSubscription<ServiceNotificationEvent>? _nativeSub;
 
-  late TabController _tab;
-  List<AppInfo> _apps = [];
-  List<AppInfo> _filteredApps = [];
-  List<String> _selectedPkgs = [];
-  List<Map<String, dynamic>> _captured = [];
-  final _webhookCtrl = TextEditingController();
-  final _searchCtrl = TextEditingController();
-  bool _serviceRunning = false;
-  bool _notifPermissionGranted = false;
+  /// init plugin + optional init foreground task (tidak otomatis start service)
+  static Future<void> init() async {
+    if (kIsWeb) return;
 
-  StreamSubscription<ServiceNotificationEvent>? _notifSub;
-
-  @override
-  void initState() {
-    super.initState();
-    _tab = TabController(length: 2, vsync: this);
-    _searchCtrl.addListener(_applySearch);
-    _initAll();
-
-    // Live stream: setiap event masuk akan disimpan & ditampilkan
-    _notifSub = NotificationListenerService.notificationsStream.listen((event) async {
-      if (event.packageName == null) return;
-
-      // cek apakah package dicentang user
-      final selected = await _getSelectedPackages();
-      if (!selected.contains(event.packageName)) return;
-
-      // buat record dan simpan
-      final rec = <String, dynamic>{
-        'package': event.packageName,
-        'appName': event.appName ?? event.packageName,
-        'title': event.title ?? '',
-        'content': event.content ?? '',
-        'timestamp': DateTime.now().toIso8601String(),
-      };
-      await _addCaptured(rec);
-
-      // refresh UI
-      await _loadCapturedIntoState();
-
-      // kirim ke webhook (jika ada)
-      await _postToWebhook(rec);
-    }, onError: (err) {
-      debugPrint('Stream error: $err');
-    });
-  }
-
-  Future<void> _initAll() async {
-    // pastikan NotifService (yang meng-handle foreground task & listener) di-init
+    // init flutter_foreground_task (boleh dipanggil beberapa kali)
     try {
-      await NotifService.ensureStarted();
+      FlutterForegroundTask.init(
+        androidNotificationOptions: AndroidNotificationOptions(
+          channelId: 'myxcreate_fg',
+          channelName: 'MyXCreate Background',
+          channelDescription: 'Menangkap notifikasi aplikasi',
+          channelImportance: NotificationChannelImportance.LOW,
+          priority: NotificationPriority.LOW,
+          onlyAlertOnce: true,
+        ),
+        iosNotificationOptions: IOSNotificationOptions(
+          showNotification: false,
+          playSound: false,
+        ),
+        foregroundTaskOptions: ForegroundTaskOptions(
+          eventAction: ForegroundTaskEventAction.repeat(15000),
+          autoRunOnBoot: false,
+          autoRunOnMyPackageReplaced: false,
+          allowWakeLock: true,
+          allowWifiLock: true,
+        ),
+      );
     } catch (e) {
-      debugPrint('ensureStarted error: $e');
+      debugPrint('init foreground error: $e');
     }
 
-    await _loadAppsAndPrefs();
-
-    final granted = await NotificationListenerService.isPermissionGranted();
-    final running = await FlutterForegroundTask.isRunningService;
-    setState(() {
-      _notifPermissionGranted = granted;
-      _serviceRunning = running;
-    });
+    // subscribe native notification stream (plugin provides ServiceNotificationEvent)
+    if (_nativeSub == null) {
+      _nativeSub = NotificationListenerService.notificationsStream.listen(
+        _onNativeEvent,
+        onError: (e) => debugPrint('native stream error: $e'),
+      );
+    }
   }
 
-  // ----- SharedPreferences helpers (local) -----
-  Future<List<String>> _getSelectedPackages() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getStringList(_keySelectedPkgs) ?? [];
+  static Future<void> _onNativeEvent(ServiceNotificationEvent e) async {
+    try {
+      final pkg = e.packageName ?? 'unknown';
+      final title = (e.title ?? '').toString();
+      final content = (e.content ?? '').toString();
+      // appName not always provided by plugin; we'll map later in UI using installed apps
+      final appName = pkg;
+      final icon = e.appIcon; // Uint8List?
+
+      final prefs = await SharedPreferences.getInstance();
+      final selected = prefs.getStringList(_kSelected) ?? [];
+
+      // Jika ada selected list non-empty, hanya capture yang dipilih.
+      if (selected.isNotEmpty && !selected.contains(pkg)) return;
+
+      final rec = <String, dynamic>{
+        'package': pkg,
+        'appName': appName,
+        'title': title,
+        'content': content,
+        'timestamp': DateTime.now().toIso8601String(),
+      };
+
+      // simpan ke shared prefs
+      final list = prefs.getStringList(_kCaptured) ?? [];
+      list.insert(0, jsonEncode(rec));
+      if (list.length > 500) list.removeRange(500, list.length);
+      await prefs.setStringList(_kCaptured, list);
+
+      // broadcast ke UI stream (sisipkan icon)
+      final mapToSend = Map<String, dynamic>.from(rec);
+      if (icon != null) mapToSend['icon'] = icon;
+      _streamController.add(mapToSend);
+
+      // post ke webhook jika ada
+      final webhook = prefs.getString(_kWebhook);
+      if (webhook != null && webhook.isNotEmpty) {
+        try {
+          await http.post(
+            Uri.parse(webhook),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'app': appName,
+              'title': title,
+              'text': content,
+              'package': pkg,
+              'timestamp': rec['timestamp'],
+            }),
+          );
+        } catch (err) {
+          debugPrint('webhook post error: $err');
+        }
+      }
+    } catch (err, st) {
+      debugPrint('NotificationManager._onNativeEvent error: $err\n$st');
+    }
   }
 
-  Future<void> _setSelectedPackages(List<String> list) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(_keySelectedPkgs, list);
+  // ================= UI helpers =================
+  static Future<List<AppInfo>> getInstalledApps() async {
+    final apps = await InstalledApps.getInstalledApps(false, true);
+    apps.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return apps;
   }
 
-  Future<void> _addCaptured(Map<String, dynamic> rec) async {
+  static Future<List<String>> getSelectedPackages() async {
     final prefs = await SharedPreferences.getInstance();
-    final list = prefs.getStringList(_keyCaptured) ?? [];
-    list.insert(0, jsonEncode(rec));
-    if (list.length > 500) list.removeRange(500, list.length);
-    await prefs.setStringList(_keyCaptured, list);
+    return prefs.getStringList(_kSelected) ?? [];
   }
 
-  Future<List<Map<String, dynamic>>> _getCapturedFromPrefs() async {
+  static Future<void> togglePackage(String pkg) async {
     final prefs = await SharedPreferences.getInstance();
-    final list = prefs.getStringList(_keyCaptured) ?? [];
+    final list = prefs.getStringList(_kSelected) ?? [];
+    if (list.contains(pkg)) {
+      list.remove(pkg);
+    } else {
+      list.add(pkg);
+    }
+    await prefs.setStringList(_kSelected, list);
+  }
+
+  static Future<List<Map<String, dynamic>>> getCaptured() async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList(_kCaptured) ?? [];
     return list.map((s) {
       try {
         return jsonDecode(s) as Map<String, dynamic>;
@@ -120,145 +159,216 @@ class _UserNotifPageState extends State<UserNotifPage>
     }).toList();
   }
 
-  Future<void> _clearCapturedPrefs() async {
+  static Future<void> clearCaptured() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(_keyCaptured, []);
+    await prefs.setStringList(_kCaptured, []);
   }
 
-  Future<void> _removeCapturedAtPrefs(int index) async {
+  static Future<void> removeCapturedAt(int index) async {
     final prefs = await SharedPreferences.getInstance();
-    final list = prefs.getStringList(_keyCaptured) ?? [];
+    final list = prefs.getStringList(_kCaptured) ?? [];
     if (index >= 0 && index < list.length) {
       list.removeAt(index);
-      await prefs.setStringList(_keyCaptured, list);
+      await prefs.setStringList(_kCaptured, list);
     }
   }
 
-  Future<String?> _getWebhook() async {
+  static Future<String?> getWebhook() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_keyWebhook);
+    return prefs.getString(_kWebhook);
   }
 
-  Future<void> _setWebhook(String? url) async {
+  static Future<void> setWebhook(String? url) async {
     final prefs = await SharedPreferences.getInstance();
     if (url == null || url.isEmpty) {
-      await prefs.remove(_keyWebhook);
+      await prefs.remove(_kWebhook);
     } else {
-      await prefs.setString(_keyWebhook, url);
+      await prefs.setString(_kWebhook, url);
     }
   }
 
-  // ----- Load apps & prefs into UI -----
-  Future<void> _loadAppsAndPrefs() async {
-    final apps = await NotifService.getInstalledApps();
-    final selected = await _getSelectedPackages();
-    final captured = await _getCapturedFromPrefs();
-    final webhook = await _getWebhook() ?? '';
-
-    setState(() {
-      _apps = apps;
-      _filteredApps = apps;
-      _selectedPkgs = selected;
-      _captured = captured;
-      _webhookCtrl.text = webhook;
-    });
+  // permission helpers
+  static Future<bool> requestPermission() async {
+    final res = await NotificationListenerService.requestPermission();
+    return res;
   }
 
-  Future<void> _loadCapturedIntoState() async {
-    final captured = await _getCapturedFromPrefs();
-    setState(() => _captured = captured);
+  static Future<bool> isPermissionGranted() async {
+    final res = await NotificationListenerService.isPermissionGranted();
+    return res;
   }
 
-  // ----- UI actions -----
-  void _applySearch() {
-    final q = _searchCtrl.text.toLowerCase();
-    setState(() {
-      if (q.isEmpty) _filteredApps = _apps;
-      else _filteredApps = _apps.where((a) => a.name.toLowerCase().contains(q)).toList();
-    });
-  }
-
-  Future<void> _togglePackage(String pkg) async {
-    final list = await _getSelectedPackages();
-    if (list.contains(pkg)) {
-      list.remove(pkg);
-    } else {
-      list.add(pkg);
-    }
-    await _setSelectedPackages(list);
-    setState(() => _selectedPkgs = list);
-  }
-
-  Future<void> _startService() async {
-    try {
-      // Pastikan NotifService menginisialisasi foreground task & listener
-      await NotifService.ensureStarted();
-    } catch (e) {
-      debugPrint('NotifService.ensureStarted() error: $e');
-    }
-
-    // Jika plugin flutter_foreground_task belum jalan, coba start service ringan
+  // foreground service start/stop
+  static Future<bool> startForeground() async {
     try {
       if (!await FlutterForegroundTask.isRunningService) {
         await FlutterForegroundTask.startService(
           notificationTitle: 'MyXCreate aktif',
           notificationText: 'Menangkap notifikasi di latar belakang',
-          callback: NotifService.startCallbackEntryPoint, // jika Anda punya entrypoint di NotifService
+          callback: _startCallbackEntryPoint,
         );
       }
+      return true;
     } catch (e) {
-      // beberapa versi plugin memerlukan cara berbeda; ignore error jika sudah di-handle oleh NotifService
-      debugPrint('startService error (ignored): $e');
+      debugPrint('startForeground error: $e');
+      return false;
     }
-
-    final running = await FlutterForegroundTask.isRunningService;
-    setState(() => _serviceRunning = running);
   }
 
-  Future<void> _stopService() async {
+  static Future<void> stopForeground() async {
     try {
-      await FlutterForegroundTask.stopService();
+      if (await FlutterForegroundTask.isRunningService) {
+        await FlutterForegroundTask.stopService();
+      }
     } catch (e) {
-      debugPrint('stopService error: $e');
+      debugPrint('stopForeground error: $e');
     }
+  }
+
+  @pragma('vm:entry-point')
+  static void _startCallbackEntryPoint() {
+    FlutterForegroundTask.setTaskHandler(_MyTaskHandler());
+  }
+}
+
+@pragma('vm:entry-point')
+class _MyTaskHandler extends TaskHandler {
+  @override
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
+    debugPrint('Foreground task onStart: $timestamp');
+  }
+
+  @override
+  void onRepeatEvent(DateTime timestamp) {}
+
+  @override
+  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
+    debugPrint('Foreground task onDestroy');
+  }
+}
+
+/// ---------------- UI: UserNotifPage ----------------
+class UserNotifPage extends StatefulWidget {
+  const UserNotifPage({Key? key}) : super(key: key);
+
+  @override
+  State<UserNotifPage> createState() => _UserNotifPageState();
+}
+
+class _UserNotifPageState extends State<UserNotifPage> with SingleTickerProviderStateMixin {
+  late TabController _tab;
+  List<AppInfo> _apps = [];
+  List<AppInfo> _filtered = [];
+  List<String> _selected = [];
+  List<Map<String, dynamic>> _captured = [];
+  final _webhookCtrl = TextEditingController();
+  final _searchCtrl = TextEditingController();
+  bool _permissionGranted = false;
+  bool _serviceRunning = false;
+
+  StreamSubscription<Map<String, dynamic>>? _streamSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _tab = TabController(length: 2, vsync: this);
+    _searchCtrl.addListener(_applySearch);
+    _initAll();
+    // subscribe to manager stream -> realtime updates
+    _streamSub = NotificationManager.stream.listen((m) {
+      if (!mounted) return;
+      setState(() {
+        _captured.insert(0, m);
+        if (_captured.length > 500) _captured.removeRange(500, _captured.length);
+      });
+    });
+  }
+
+  Future<void> _initAll() async {
+    await NotificationManager.init();
+    await _loadAll();
+    final p = await NotificationManager.isPermissionGranted();
     final running = await FlutterForegroundTask.isRunningService;
+    if (!mounted) return;
+    setState(() {
+      _permissionGranted = p;
+      _serviceRunning = running;
+    });
+  }
+
+  Future<void> _loadAll() async {
+    final apps = await NotificationManager.getInstalledApps();
+    final selected = await NotificationManager.getSelectedPackages();
+    final captured = await NotificationManager.getCaptured();
+    final webhook = await NotificationManager.getWebhook() ?? '';
+
+    setState(() {
+      _apps = apps;
+      _filtered = apps;
+      _selected = selected;
+      _captured = captured;
+      _webhookCtrl.text = webhook;
+    });
+  }
+
+  void _applySearch() {
+    final q = _searchCtrl.text.trim().toLowerCase();
+    setState(() {
+      if (q.isEmpty) _filtered = _apps;
+      else _filtered = _apps.where((a) => a.name.toLowerCase().contains(q) || a.packageName.toLowerCase().contains(q)).toList();
+    });
+  }
+
+  Future<void> _togglePkg(String pkg) async {
+    await NotificationManager.togglePackage(pkg);
+    final sel = await NotificationManager.getSelectedPackages();
+    if (!mounted) return;
+    setState(() => _selected = sel);
+  }
+
+  Future<void> _requestPermission() async {
+    final granted = await NotificationManager.isPermissionGranted();
+    if (!mounted) return;
+    setState(() => _permissionGranted = granted);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(granted ? 'Akses notifikasi diberikan' : 'Izin notifikasi tidak diberikan')));
+  }
+
+  Future<void> _startBg() async {
+    final ok = await NotificationManager.startForeground();
+    final running = await FlutterForegroundTask.isRunningService;
+    if (!mounted) return;
     setState(() => _serviceRunning = running);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(ok ? 'Latar belakang: Aktif' : 'Gagal jalankan background')));
   }
 
-  Future<void> _openNotifAccessSettings() async {
-    await NotificationListenerService.requestPermission();
-    final granted = await NotificationListenerService.isPermissionGranted();
-    setState(() => _notifPermissionGranted = granted);
+  Future<void> _stopBg() async {
+    await NotificationManager.stopForeground();
+    final running = await FlutterForegroundTask.isRunningService;
+    if (!mounted) return;
+    setState(() => _serviceRunning = running);
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Latar belakang dihentikan')));
   }
 
-  Future<void> _deleteCapturedAt(int index) async {
-    await _removeCapturedAtPrefs(index);
-    await _loadCapturedIntoState();
+  Future<void> _saveWebhook() async {
+    await NotificationManager.setWebhook(_webhookCtrl.text.trim());
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Webhook disimpan')));
+  }
+
+  Future<void> _refreshCaptured() async {
+    final captured = await NotificationManager.getCaptured();
+    if (!mounted) return;
+    setState(() => _captured = captured);
   }
 
   Future<void> _clearCaptured() async {
-    await _clearCapturedPrefs();
-    await _loadCapturedIntoState();
+    await NotificationManager.clearCaptured();
+    if (!mounted) return;
+    setState(() => _captured = []);
   }
 
-  Future<void> _postToWebhook(Map<String, dynamic> rec) async {
-    final url = _webhookCtrl.text.trim();
-    if (url.isEmpty) return;
-
-    final body = {
-      "app": rec['appName'] ?? rec['package'],
-      "title": rec['title'] ?? '',
-      "text": rec['content'] ?? '',
-    };
-
-    try {
-      final resp = await http.post(Uri.parse(url),
-          headers: {"Content-Type": "application/json"},
-          body: jsonEncode(body));
-      debugPrint('Webhook POST status: ${resp.statusCode}');
-    } catch (e) {
-      debugPrint('Webhook POST error: $e');
-    }
+  Future<void> _removeAt(int idx) async {
+    await NotificationManager.removeCapturedAt(idx);
+    await _refreshCaptured();
   }
 
   @override
@@ -266,212 +376,152 @@ class _UserNotifPageState extends State<UserNotifPage>
     _tab.dispose();
     _webhookCtrl.dispose();
     _searchCtrl.dispose();
-    _notifSub?.cancel();
+    _streamSub?.cancel();
     super.dispose();
   }
 
-  Widget _buildHeaderButtons() {
-    return Wrap(
-      spacing: 12,
-      runSpacing: 8,
-      children: [
-        ElevatedButton.icon(
-          icon: Icon(_notifPermissionGranted ? Icons.check : Icons.notifications_off),
-          label: Text(_notifPermissionGranted ? 'Akses Notif: Terpasang' : 'Berikan Akses Notifikasi'),
-          onPressed: _openNotifAccessSettings,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: _notifPermissionGranted ? Colors.green : Colors.deepPurple,
-          ),
-        ),
-        ElevatedButton.icon(
-          icon: Icon(_serviceRunning ? Icons.pause : Icons.play_arrow),
-          label: Text(_serviceRunning ? 'Hentikan Background' : 'Jalankan di Background'),
-          onPressed: _serviceRunning ? _stopService : _startService,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: _serviceRunning ? Colors.orange : Colors.deepPurple,
-          ),
-        ),
-        ElevatedButton.icon(
-          icon: const Icon(Icons.refresh),
-          label: const Text('Muat ulang'),
-          onPressed: () async {
-            await _loadAppsAndPrefs();
-            final running = await FlutterForegroundTask.isRunningService;
-            final granted = await NotificationListenerService.isPermissionGranted();
-            setState(() {
-              _serviceRunning = running;
-              _notifPermissionGranted = granted;
-            });
-          },
-        ),
-      ],
-    );
+  Widget _buildHeader() {
+    return Wrap(spacing: 8, runSpacing: 8, children: [
+      ElevatedButton.icon(
+        icon: Icon(_permissionGranted ? Icons.check_circle : Icons.notifications_off),
+        label: Text(_permissionGranted ? 'Izin Notif: Ada' : 'Berikan Akses Notif'),
+        onPressed: _requestPermission,
+        style: ElevatedButton.styleFrom(backgroundColor: _permissionGranted ? Colors.green : Colors.deepPurple),
+      ),
+      ElevatedButton.icon(
+        icon: Icon(_serviceRunning ? Icons.pause_circle : Icons.play_circle),
+        label: Text(_serviceRunning ? 'Hentikan Background' : 'Jalankan Background'),
+        onPressed: _serviceRunning ? _stopBg : _startBg,
+        style: ElevatedButton.styleFrom(backgroundColor: _serviceRunning ? Colors.orange : Colors.deepPurple),
+      ),
+      ElevatedButton.icon(
+        icon: const Icon(Icons.refresh),
+        label: const Text('Muat ulang'),
+        onPressed: () async {
+          await _loadAll();
+          final running = await FlutterForegroundTask.isRunningService;
+          final granted = await NotificationManager.isPermissionGranted();
+          if (!mounted) return;
+          setState(() {
+            _serviceRunning = running;
+            _permissionGranted = granted;
+          });
+        },
+      ),
+    ]);
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context).copyWith(
-      colorScheme: Theme.of(context).colorScheme.copyWith(primary: Colors.deepPurple),
-    );
-
-    return Theme(
-      data: theme,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Notifikasi Aplikasi'),
-          bottom: TabBar(
-            controller: _tab,
-            tabs: const [
-              Tab(icon: Icon(Icons.tune), text: 'Pilih Aplikasi'),
-              Tab(icon: Icon(Icons.notifications), text: 'Riwayat Notifikasi'),
-            ],
-          ),
-        ),
-        body: TabBarView(
-          controller: _tab,
-          children: [
-            // --- FILTER TAB ---
-            Padding(
-              padding: const EdgeInsets.all(12.0),
-              child: Column(
-                children: [
-                  _buildHeaderButtons(),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _webhookCtrl,
-                          decoration: const InputDecoration(
-                            labelText: 'Webhook (opsional)',
-                            hintText: 'https://server/receive',
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      ElevatedButton(
-                        onPressed: () async {
-                          await _setWebhook(_webhookCtrl.text.trim());
-                          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Webhook disimpan')));
-                        },
-                        child: const Text('Simpan'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _searchCtrl,
-                    decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Cari aplikasi...'),
-                  ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: _filteredApps.isEmpty
-                        ? const Center(child: Text('Tidak ada aplikasi'))
-                        : ListView.builder(
-                            itemCount: _filteredApps.length,
-                            itemBuilder: (_, i) {
-                              final a = _filteredApps[i];
-                              final enabled = _selectedPkgs.contains(a.packageName);
-                              return Card(
-                                color: enabled ? Colors.deepPurple.shade50 : null,
-                                margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                                child: ListTile(
-                                  leading: a.icon != null ? Image.memory(a.icon!, width: 36, height: 36) : const Icon(Icons.apps, color: Colors.deepPurple),
-                                  title: Text(a.name),
-                                  subtitle: Text(a.packageName, style: const TextStyle(fontSize: 12)),
-                                  trailing: Switch(value: enabled, onChanged: (_) => _togglePackage(a.packageName)),
-                                ),
-                              );
-                            },
-                          ),
-                  ),
-                ],
-              ),
-            ),
-
-            // --- CAPTURED TAB ---
-            RefreshIndicator(
-              onRefresh: _loadCapturedIntoState,
-              child: _captured.isEmpty
-                  ? ListView(
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.all(24.0),
-                          child: Column(
-                            children: const [
-                              Icon(Icons.inbox, size: 56, color: Colors.grey),
-                              SizedBox(height: 12),
-                              Text('Belum ada notifikasi yang ditangkap', style: TextStyle(color: Colors.grey)),
-                            ],
-                          ),
-                        )
-                      ],
-                    )
-                  : ListView.separated(
-                      padding: const EdgeInsets.only(bottom: 16),
-                      itemCount: _captured.length + 1,
-                      separatorBuilder: (_, __) => const Divider(height: 0),
-                      itemBuilder: (ctx, i) {
-                        if (i == 0) {
-                          return Padding(
-                            padding: const EdgeInsets.all(12.0),
-                            child: Row(
-                              children: [
-                                ElevatedButton.icon(
-                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade400),
-                                  onPressed: () async {
-                                    await _clearCaptured();
-                                  },
-                                  icon: const Icon(Icons.delete_sweep),
-                                  label: const Text('Hapus semua'),
-                                ),
-                                const SizedBox(width: 12),
-                                OutlinedButton.icon(onPressed: _loadCapturedIntoState, icon: const Icon(Icons.refresh), label: const Text('Muat ulang'))
-                              ],
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Notifikasi Aplikasi'),
+        bottom: TabBar(controller: _tab, tabs: const [
+          Tab(text: 'Pilih Aplikasi', icon: Icon(Icons.tune)),
+          Tab(text: 'Riwayat', icon: Icon(Icons.notifications))
+        ]),
+      ),
+      body: TabBarView(
+        controller: _tab,
+        children: [
+          // ----- Pilih Aplikasi -----
+          Padding(
+            padding: const EdgeInsets.all(12.0),
+            child: Column(children: [
+              _buildHeader(),
+              const SizedBox(height: 12),
+              Row(children: [
+                Expanded(child: TextField(controller: _webhookCtrl, decoration: const InputDecoration(labelText: 'Webhook (opsional)', hintText: 'https://server/receive'))),
+                const SizedBox(width: 8),
+                ElevatedButton(onPressed: _saveWebhook, child: const Text('Simpan')),
+              ]),
+              const SizedBox(height: 12),
+              TextField(controller: _searchCtrl, decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Cari aplikasi...')),
+              const SizedBox(height: 8),
+              Expanded(
+                child: _filtered.isEmpty
+                    ? const Center(child: Text('Tidak ada aplikasi'))
+                    : ListView.builder(
+                        itemCount: _filtered.length,
+                        itemBuilder: (_, i) {
+                          final a = _filtered[i];
+                          final enabled = _selected.contains(a.packageName);
+                          return Card(
+                            color: enabled ? Colors.deepPurple.shade50 : null,
+                            margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                            child: ListTile(
+                              leading: a.icon != null ? Image.memory(a.icon!, width: 36, height: 36) : const Icon(Icons.apps, color: Colors.deepPurple),
+                              title: Text(a.name),
+                              subtitle: Text(a.packageName, style: const TextStyle(fontSize: 12)),
+                              trailing: Switch(value: enabled, onChanged: (_) => _togglePkg(a.packageName)),
                             ),
                           );
-                        }
-                        final n = _captured[i - 1];
-                        return Card(
-                          margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                          child: ListTile(
-                            leading: const Icon(Icons.notifications, color: Colors.deepPurple),
-                            title: Text(n['title']?.toString() ?? '', maxLines: 1, overflow: TextOverflow.ellipsis),
-                            subtitle: Text('${n['appName'] ?? n['package']} • ${n['content'] ?? ''}', maxLines: 2, overflow: TextOverflow.ellipsis),
-                            trailing: Wrap(spacing: 6, children: [
-                              Text((n['timestamp'] ?? '').toString().split('T').first, style: const TextStyle(fontSize: 11)),
-                              IconButton(icon: const Icon(Icons.delete, color: Colors.red, size: 20), onPressed: () => _deleteCapturedAt(i - 1)),
-                            ]),
-                            onTap: () {
-                              showDialog(context: context, builder: (_) {
-                                return AlertDialog(
-                                  title: Text(n['title'] ?? 'Tanpa Judul'),
-                                  content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                    Text('Aplikasi: ${n['appName'] ?? n['package']}'),
-                                    const SizedBox(height: 8),
-                                    Text('Package: ${n['package']}'),
-                                    const SizedBox(height: 8),
-                                    Text('Isi: ${n['content']}'),
-                                    const SizedBox(height: 8),
-                                    Text('Waktu: ${n['timestamp']}'),
-                                  ]),
-                                  actions: [ TextButton(onPressed: () => Navigator.pop(context), child: const Text('Tutup')) ],
-                                );
-                              });
-                            },
-                          ),
+                        },
+                      ),
+              ),
+            ]),
+          ),
+
+          // ----- Riwayat -----
+          RefreshIndicator(
+            onRefresh: _refreshCaptured,
+            child: _captured.isEmpty
+                ? ListView(children: const [SizedBox(height: 60), Center(child: Text('Belum ada notifikasi'))])
+                : ListView.separated(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    itemCount: _captured.length + 1,
+                    separatorBuilder: (_, __) => const Divider(height: 0),
+                    itemBuilder: (ctx, i) {
+                      if (i == 0) {
+                        return Padding(
+                          padding: const EdgeInsets.all(12.0),
+                          child: Row(children: [
+                            ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade400),
+                              onPressed: _clearCaptured,
+                              icon: const Icon(Icons.delete_sweep),
+                              label: const Text('Hapus semua'),
+                            ),
+                            const SizedBox(width: 12),
+                            OutlinedButton.icon(onPressed: _refreshCaptured, icon: const Icon(Icons.refresh), label: const Text('Muat ulang'))
+                          ]),
                         );
-                      },
-                    ),
-            ),
-          ],
-        ),
+                      }
+                      final n = _captured[i - 1];
+                      return Card(
+                        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                        child: ListTile(
+                          leading: n['icon'] != null && n['icon'] is Uint8List ? Image.memory(n['icon'] as Uint8List, width: 36, height: 36) : const Icon(Icons.notifications, color: Colors.deepPurple),
+                          title: Text(n['title']?.toString() ?? '', maxLines: 1, overflow: TextOverflow.ellipsis),
+                          subtitle: Text('${n['appName'] ?? n['package']} • ${n['content'] ?? ''}', maxLines: 2, overflow: TextOverflow.ellipsis),
+                          trailing: Wrap(spacing: 6, children: [
+                            Text((n['timestamp'] ?? '').toString().split('T').first, style: const TextStyle(fontSize: 11)),
+                            IconButton(icon: const Icon(Icons.delete, color: Colors.red, size: 20), onPressed: () => _removeAt(i - 1)),
+                          ]),
+                          onTap: () {
+                            showDialog(context: context, builder: (_) {
+                              return AlertDialog(
+                                title: Text(n['title'] ?? 'Tanpa Judul'),
+                                content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                  Text('Aplikasi: ${n['appName'] ?? n['package']}'),
+                                  const SizedBox(height: 8),
+                                  Text('Package: ${n['package']}'),
+                                  const SizedBox(height: 8),
+                                  Text('Isi: ${n['content']}'),
+                                  const SizedBox(height: 8),
+                                  Text('Waktu: ${n['timestamp']}'),
+                                ]),
+                                actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Tutup'))],
+                              );
+                            });
+                          },
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
       ),
     );
   }
-}
-
-extension on ServiceNotificationEvent {
-  get appName => null;
 }
