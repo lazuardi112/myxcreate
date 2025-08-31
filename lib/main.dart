@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
@@ -12,14 +13,15 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:http/http.dart' as http;
 import 'package:app_links/app_links.dart';
 
-// notification plugin
+// notification listener plugin
 import 'package:notification_listener_service/notification_event.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
 
+// foreground task
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+
 // pages
 import 'pages/user_notif.dart';
-
-// app pages
 import 'auth/login.dart';
 import 'main_page.dart';
 import 'update_page.dart';
@@ -44,6 +46,28 @@ final StreamController<ServiceNotificationEvent> notificationStreamController =
 Stream<ServiceNotificationEvent> get notificationStream =>
     notificationStreamController.stream;
 
+/// Entry-point callback untuk foreground service
+@pragma('vm:entry-point')
+void startCallback() {
+  FlutterForegroundTask.setTaskHandler(MyTaskHandler());
+}
+
+/// Handler untuk foreground task
+class MyTaskHandler extends TaskHandler {
+  @override
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
+    debugPrint("✅ Foreground task dimulai");
+  }
+
+  @override
+  void onRepeatEvent(DateTime timestamp) {}
+
+  @override
+  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
+    debugPrint("🛑 Foreground task dihentikan");
+  }
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   FlutterNativeSplash.preserve(
@@ -54,6 +78,29 @@ Future<void> main() async {
         home: WebPage(), debugShowCheckedModeBanner: false));
     return;
   }
+
+  /// Inisialisasi ForegroundTask (wajib sebelum runApp)
+  await FlutterForegroundTask.init(
+    androidNotificationOptions: AndroidNotificationOptions(
+      channelId: 'myxcreate_fg',
+      channelName: 'MyXCreate Background',
+      channelDescription: 'Menangkap notifikasi aplikasi',
+      channelImportance: NotificationChannelImportance.LOW,
+      priority: NotificationPriority.LOW,
+      onlyAlertOnce: true,
+    ),
+    iosNotificationOptions: const IOSNotificationOptions(
+      showNotification: false,
+      playSound: false,
+    ),
+    foregroundTaskOptions: const ForegroundTaskOptions(
+      interval: 5000,
+      autoRunOnBoot: false,
+      autoRunOnMyPackageReplaced: false,
+      allowWakeLock: true,
+      allowWifiLock: false,
+    ),
+  );
 
   Widget initialPage = const LoginPage();
   try {
@@ -141,27 +188,31 @@ class _MyAppState extends State<MyApp> {
   }
 
   Future<void> _initNotifListener() async {
-    final granted = await NotificationListenerService.isPermissionGranted();
-    if (!granted) {
-      debugPrint("⚠️ Izin notifikasi belum diberikan");
-      return;
-    }
+    try {
+      final granted = await NotificationListenerService.isPermissionGranted();
+      if (!granted) {
+        debugPrint("⚠️ Izin notifikasi belum diberikan");
+        return;
+      }
 
-    _sub = NotificationListenerService.notificationsStream.listen((event) {
-      if (!mounted) return;
-      notificationStreamController.add(event);
+      _sub = NotificationListenerService.notificationsStream.listen((event) {
+        if (!mounted) return;
+        notificationStreamController.add(event);
 
-      setState(() {
-        _preview.insert(0, event);
-        if (_preview.length > 5) {
-          _preview.removeRange(5, _preview.length);
-        }
+        setState(() {
+          _preview.insert(0, event);
+          if (_preview.length > 5) {
+            _preview.removeRange(5, _preview.length);
+          }
+        });
+
+        log("📩 Notifikasi masuk: ${event.packageName} - ${event.title}");
+      }, onError: (e) {
+        debugPrint('notif stream error: $e');
       });
-
-      log("📩 Notifikasi masuk: ${event.packageName} - ${event.title}");
-    }, onError: (e) {
-      debugPrint('notif stream error: $e');
-    });
+    } catch (e, st) {
+      debugPrint("Listener error: $e\n$st");
+    }
   }
 
   @override
@@ -176,7 +227,10 @@ class _MyAppState extends State<MyApp> {
       navigatorKey: navigatorKey,
       title: 'MyXCreate',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(primarySwatch: Colors.deepPurple),
+      theme: ThemeData(
+        primarySwatch: Colors.indigo,
+        scaffoldBackgroundColor: Colors.grey.shade100,
+      ),
       home: Stack(
         children: [
           DeepLinkWrapper(initialPage: widget.initialPage),
@@ -209,18 +263,21 @@ class _MyAppState extends State<MyApp> {
 
   Widget _buildPreviewCard(ServiceNotificationEvent e) {
     return Card(
+      color: Colors.white,
       elevation: 6,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       child: ListTile(
         leading: (e.appIcon != null)
             ? Image.memory(e.appIcon!, width: 40, height: 40)
-            : const Icon(Icons.notifications),
+            : const Icon(Icons.notifications, color: Colors.indigo),
         title: Text(e.title ?? 'No title',
-            maxLines: 1, overflow: TextOverflow.ellipsis),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.bold)),
         subtitle: Text(e.content ?? 'No content',
             maxLines: 1, overflow: TextOverflow.ellipsis),
         trailing: IconButton(
-            icon: const Icon(Icons.chevron_right),
+            icon: const Icon(Icons.chevron_right, color: Colors.indigo),
             onPressed: () =>
                 navigatorKey.currentState?.pushNamed('/user_notif')),
       ),
@@ -228,7 +285,7 @@ class _MyAppState extends State<MyApp> {
   }
 }
 
-/// DeepLinkWrapper (biarkan sama)
+/// DeepLinkWrapper
 class DeepLinkWrapper extends StatefulWidget {
   final Widget initialPage;
   const DeepLinkWrapper({Key? key, required this.initialPage}) : super(key: key);
@@ -301,7 +358,7 @@ class _CustomSplashPageState extends State<CustomSplashPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.deepPurple,
+      backgroundColor: Colors.indigo,
       body: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
