@@ -5,11 +5,11 @@
     <!-- Internet -->
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- Storage (Android 10 ke bawah). Android 11+ harus MANAGE_EXTERNAL_STORAGE jika diperlukan. -->
+    <!-- Storage (Android 10 ke bawah). Android 11+ pakai MANAGE_EXTERNAL_STORAGE jika diperlukan -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
 
-    <!-- Kamera (jika diperlukan) -->
+    <!-- Kamera (opsional) -->
     <uses-permission android:name="android.permission.CAMERA" />
 
     <!-- Android 13+ notifikasi runtime permission -->
@@ -22,13 +22,13 @@
     <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
         tools:ignore="ProtectedPermissions" />
 
-    <!-- Keep device awake for background service -->
+    <!-- Keep device awake -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
-    <!-- Query packages (installed_apps plugin) -->
+    <!-- Query packages (untuk plugin installed_apps) -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
-    <!-- Intents queries -->
+    <!-- Queries section (biar bisa detect aplikasi terinstall & intent) -->
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -59,13 +59,16 @@
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
 
+            <!-- Tema Flutter -->
             <meta-data android:name="io.flutter.embedding.android.NormalTheme" android:resource="@style/NormalTheme" />
 
+            <!-- Launcher intent -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- Deep link -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -74,13 +77,13 @@
             </intent-filter>
         </activity>
 
-        <!-- Foreground service used by flutter_foreground_task -->
+        <!-- Foreground service (flutter_foreground_task) -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
             android:foregroundServiceType="dataSync|connectedDevice|mediaProjection"
             android:exported="false" />
 
-        <!-- Notification listener service required by notification_listener_service plugin -->
+        <!-- Notification listener service -->
         <service
             android:name="com.kronos.notification_listener.NotificationListener"
             android:label="Xcreate Notifikasi"
@@ -91,6 +94,7 @@
             </intent-filter>
         </service>
 
+        <!-- Flutter embedding v2 -->
         <meta-data android:name="flutterEmbedding" android:value="2" />
     </application>
 </manifest>

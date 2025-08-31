@@ -1,9 +1,17 @@
+// lib/pages/user_notif.dart
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:installed_apps/installed_apps.dart';
 import 'package:installed_apps/app_info.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:myxcreate/main.dart'; // akses globalNotifications & notifLogs
+import 'package:myxcreate/main.dart' show
+  globalNotifications,
+  globalNotifCounter,
+  notifLogs,
+  notifLogCounter,
+  addNotifLog,
+  checkAndRequestNotifPermission;
 
 class UserNotifPage extends StatefulWidget {
   const UserNotifPage({super.key});
@@ -16,7 +24,7 @@ class _UserNotifPageState extends State<UserNotifPage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   List<AppInfo> _apps = [];
-  Set<String> _selectedApps = {}; // disimpan packageName yang dipilih
+  Set<String> _selectedApps = {}; // package names
   bool _loadingApps = true;
 
   final TextEditingController _urlController = TextEditingController();
@@ -25,70 +33,137 @@ class _UserNotifPageState extends State<UserNotifPage>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this); // ada 3 tab
-    _loadApps();
+    _tabController = TabController(length: 3, vsync: this);
     _loadSelectedApps();
     _loadUrl();
+    _tryLoadAppsIfPermission();
+    // listen counters to rebuild when data changes
+    globalNotifCounter.addListener(_onNotifChanged);
+    notifLogCounter.addListener(_onNotifChanged);
   }
 
-  /// Ambil daftar aplikasi terinstall
+  @override
+  void dispose() {
+    globalNotifCounter.removeListener(_onNotifChanged);
+    notifLogCounter.removeListener(_onNotifChanged);
+    _tabController.dispose();
+    _urlController.dispose();
+    super.dispose();
+  }
+
+  void _onNotifChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _tryLoadAppsIfPermission() async {
+    // installed_apps doesn't require notification permission, but we can still allow manual refresh
+    await _loadApps();
+  }
+
   Future<void> _loadApps() async {
     setState(() => _loadingApps = true);
-    final apps = await InstalledApps.getInstalledApps(
-      true, // include system apps
-      true, // include app icons
-    );
-    setState(() {
-      _apps = apps;
-      _loadingApps = false;
-    });
+    try {
+      final apps = await InstalledApps.getInstalledApps(true, true);
+      if (!mounted) return;
+      setState(() {
+        _apps = apps;
+      });
+    } catch (e) {
+      // fallback: empty list and inform user
+      addNotifLog("⚠️ Gagal load installed apps: $e");
+      setState(() {
+        _apps = [];
+      });
+    } finally {
+      if (mounted) setState(() => _loadingApps = false);
+    }
   }
 
-  /// Ambil data aplikasi yang dipilih dari SharedPreferences
   Future<void> _loadSelectedApps() async {
-    final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getStringList("selectedApps") ?? [];
-    setState(() {
-      _selectedApps = saved.toSet();
-    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getStringList("selectedApps") ?? [];
+      if (mounted) setState(() => _selectedApps = saved.toSet());
+    } catch (e) {
+      addNotifLog("⚠️ Gagal load selected apps: $e");
+    }
   }
 
-  /// Simpan pilihan aplikasi ke SharedPreferences
   Future<void> _saveSelectedApps() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList("selectedApps", _selectedApps.toList());
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList("selectedApps", _selectedApps.toList());
+      addNotifLog("💾 Selected apps saved (${_selectedApps.length})");
+    } catch (e) {
+      addNotifLog("❌ Gagal simpan selected apps: $e");
+    }
   }
 
-  /// Ambil URL dari SharedPreferences
   Future<void> _loadUrl() async {
-    final prefs = await SharedPreferences.getInstance();
-    final url = prefs.getString("notifPostUrl");
-    setState(() {
-      _savedUrl = url;
-      if (url != null) _urlController.text = url;
-    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final url = prefs.getString("notifPostUrl") ?? '';
+      if (mounted) {
+        _savedUrl = url;
+        _urlController.text = url;
+      }
+    } catch (e) {
+      addNotifLog("⚠️ Gagal load URL: $e");
+    }
   }
 
-  /// Simpan URL ke SharedPreferences
   Future<void> _saveUrl() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString("notifPostUrl", _urlController.text.trim());
-    setState(() {
-      _savedUrl = _urlController.text.trim();
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("✅ URL berhasil disimpan")),
-    );
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString("notifPostUrl", _urlController.text.trim());
+      setState(() => _savedUrl = _urlController.text.trim());
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("✅ URL berhasil disimpan")),
+      );
+      addNotifLog("💾 URL saved: ${_urlController.text.trim()}");
+    } catch (e) {
+      addNotifLog("❌ Gagal simpan URL: $e");
+    }
   }
 
-  /// Hapus log
-  void _clearLogs() {
-    setState(() {
-      notifLogs.clear();
-    });
+  Future<void> _requestPermissionFromUI() async {
+    final granted = await checkAndRequestNotifPermission();
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("🗑 Log dihapus")),
+      SnackBar(content: Text(granted ? "✅ Izin notifikasi aktif" : "⚠️ Izin tidak diberikan")),
     );
+    if (granted) {
+      // refresh apps and try to start listener (main handles restart on resume)
+      await _loadApps();
+    }
+  }
+
+  void _clearLogs() async {
+    try {
+      notifLogs.clear();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('notifLogs');
+      notifLogCounter.value++;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("🗑 Log dihapus")));
+    } catch (e) {
+      addNotifLog("❌ Gagal hapus log: $e");
+    }
+  }
+
+  // TEST function: send dummy POST to saved URL (useful for debugging)
+  Future<void> _testSendDummy() async {
+    final url = _urlController.text.trim();
+    if (url.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Isi URL dulu")));
+      return;
+    }
+    try {
+      final resp = await http.post(Uri.parse(url), body: {'test': 'ok'}).timeout(const Duration(seconds: 8));
+      addNotifLog("🧪 Test POST -> ${resp.statusCode}");
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Test POST: ${resp.statusCode}")));
+    } catch (e) {
+      addNotifLog("❌ Test POST failed: $e");
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Test POST gagal (lihat log)")));
+    }
   }
 
   @override
@@ -108,16 +183,20 @@ class _UserNotifPageState extends State<UserNotifPage>
       body: TabBarView(
         controller: _tabController,
         children: [
-          _buildAppList(),
-          _buildNotifList(),
-          _buildLogList(),
+          _buildAppListTab(),
+          _buildNotifListTab(),
+          _buildLogTab(),
         ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _requestPermissionFromUI,
+        icon: const Icon(Icons.notifications_active),
+        label: const Text("Beri Izin Notifikasi"),
       ),
     );
   }
 
-  /// Tab 1: Daftar Aplikasi + input URL
-  Widget _buildAppList() {
+  Widget _buildAppListTab() {
     return Column(
       children: [
         Padding(
@@ -134,10 +213,13 @@ class _UserNotifPageState extends State<UserNotifPage>
                 ),
               ),
               const SizedBox(width: 8),
-              ElevatedButton(
-                onPressed: _saveUrl,
-                child: const Text("Simpan"),
-              ),
+              Column(
+                children: [
+                  ElevatedButton(onPressed: _saveUrl, child: const Text("Simpan")),
+                  const SizedBox(height: 6),
+                  ElevatedButton(onPressed: _testSendDummy, child: const Text("Test POST")),
+                ],
+              )
             ],
           ),
         ),
@@ -145,68 +227,86 @@ class _UserNotifPageState extends State<UserNotifPage>
           child: _loadingApps
               ? const Center(child: CircularProgressIndicator())
               : _apps.isEmpty
-                  ? const Center(child: Text("Tidak ada aplikasi ditemukan"))
-                  : ListView.builder(
-                      itemCount: _apps.length,
-                      itemBuilder: (context, index) {
-                        final app = _apps[index];
-                        final isSelected =
-                            _selectedApps.contains(app.packageName);
-
-                        return CheckboxListTile(
-                          value: isSelected,
-                          onChanged: (val) {
-                            setState(() {
-                              if (val == true) {
-                                _selectedApps.add(app.packageName!);
-                              } else {
-                                _selectedApps.remove(app.packageName);
-                              }
-                              _saveSelectedApps();
-                            });
-                          },
-                          title: Text(app.name),
-                          subtitle: Text(app.packageName ?? "-"),
-                          secondary: app.icon != null
-                              ? Image.memory(app.icon as Uint8List,
-                                  width: 35, height: 35)
-                              : const Icon(Icons.apps),
-                        );
-                      },
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text("Tidak ada aplikasi ditemukan"),
+                          const SizedBox(height: 8),
+                          ElevatedButton(
+                              onPressed: () => _loadApps(), child: const Text("Muat Ulang Aplikasi"))
+                        ],
+                      ),
+                    )
+                  : RefreshIndicator(
+                      onRefresh: _loadApps,
+                      child: ListView.builder(
+                        itemCount: _apps.length,
+                        itemBuilder: (context, index) {
+                          final app = _apps[index];
+                          final pkg = app.packageName ?? '';
+                          final isSelected = _selectedApps.contains(pkg);
+                          return CheckboxListTile(
+                            value: isSelected,
+                            onChanged: (val) {
+                              setState(() {
+                                if (val == true) {
+                                  _selectedApps.add(pkg);
+                                } else {
+                                  _selectedApps.remove(pkg);
+                                }
+                                _saveSelectedApps();
+                              });
+                            },
+                            title: Text(app.name ?? "Tanpa Nama"),
+                            subtitle: Text(pkg),
+                            secondary: app.icon != null
+                                ? Image.memory(app.icon as Uint8List, width: 40, height: 40)
+                                : const Icon(Icons.apps),
+                          );
+                        },
+                      ),
                     ),
         ),
       ],
     );
   }
 
-  /// Tab 2: Daftar Notifikasi
-  Widget _buildNotifList() {
+  Widget _buildNotifListTab() {
     if (globalNotifications.isEmpty) {
-      return const Center(child: Text("Belum ada notifikasi masuk"));
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Text("Belum ada notifikasi masuk"),
+            SizedBox(height: 8),
+            Text("Tekan tombol 'Beri Izin Notifikasi' dan pastikan aplikasi yang diinginkan dicentang."),
+          ],
+        ),
+      );
     }
 
     return ListView.builder(
       itemCount: globalNotifications.length,
       itemBuilder: (context, index) {
         final notif = globalNotifications[index];
+        final title = notif.title ?? "(Tanpa Judul)";
+        final content = notif.content ?? "(Tanpa isi)";
+        final pkg = notif.packageName ?? "-";
         return ListTile(
-          leading: notif.appIcon != null
-              ? Image.memory(notif.appIcon!, width: 35, height: 35)
-              : const Icon(Icons.notifications),
-          title: Text(notif.title ?? "Tanpa Judul"),
-          subtitle: Text(notif.content ?? "Tanpa isi"),
-          trailing: notif.hasRemoved == true
-              ? const Text("Removed", style: TextStyle(color: Colors.red))
-              : null,
+          leading: notif.appIcon != null ? Image.memory(notif.appIcon!, width: 40, height: 40) : const Icon(Icons.notifications),
+          title: Text(title),
+          subtitle: Text("$pkg\n$content", maxLines: 3, overflow: TextOverflow.ellipsis),
+          isThreeLine: true,
+          trailing: notif.hasRemoved == true ? const Text("Removed", style: TextStyle(color: Colors.red)) : null,
         );
       },
     );
   }
 
-  /// Tab 3: Log hasil post notifikasi
-  Widget _buildLogList() {
+  Widget _buildLogTab() {
     if (notifLogs.isEmpty) {
-      return const Center(child: Text("Belum ada log"));
+      return Center(child: Column(mainAxisSize: MainAxisSize.min, children: const [Text("Belum ada log")]));
     }
 
     return Column(
@@ -226,9 +326,10 @@ class _UserNotifPageState extends State<UserNotifPage>
           child: ListView.builder(
             itemCount: notifLogs.length,
             itemBuilder: (context, index) {
+              final txt = notifLogs[index];
               return ListTile(
                 leading: const Icon(Icons.bug_report, color: Colors.deepPurple),
-                title: Text(notifLogs[index]),
+                title: Text(txt),
               );
             },
           ),
