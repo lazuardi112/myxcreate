@@ -12,15 +12,14 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:http/http.dart' as http;
 import 'package:app_links/app_links.dart';
 
-// notification listener plugin
+// notification plugin
 import 'package:notification_listener_service/notification_event.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
 
-// foreground task
-import 'package:flutter_foreground_task/flutter_foreground_task.dart';
-
 // pages
 import 'pages/user_notif.dart';
+
+// app pages
 import 'auth/login.dart';
 import 'main_page.dart';
 import 'update_page.dart';
@@ -45,28 +44,6 @@ final StreamController<ServiceNotificationEvent> notificationStreamController =
 Stream<ServiceNotificationEvent> get notificationStream =>
     notificationStreamController.stream;
 
-/// Entry-point callback untuk foreground service
-@pragma('vm:entry-point')
-void startCallback() {
-  FlutterForegroundTask.setTaskHandler(MyTaskHandler());
-}
-
-/// Handler untuk foreground task
-class MyTaskHandler extends TaskHandler {
-  @override
-  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
-    debugPrint("✅ Foreground task dimulai");
-  }
-
-  @override
-  void onRepeatEvent(DateTime timestamp) {}
-
-  @override
-  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
-    debugPrint("🛑 Foreground task dihentikan");
-  }
-}
-
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   FlutterNativeSplash.preserve(
@@ -77,29 +54,6 @@ Future<void> main() async {
         home: WebPage(), debugShowCheckedModeBanner: false));
     return;
   }
-
-  /// Inisialisasi ForegroundTask (wajib sebelum runApp)
-  FlutterForegroundTask.init(
-    androidNotificationOptions: AndroidNotificationOptions(
-      channelId: 'myxcreate_fg',
-      channelName: 'MyXCreate Background',
-      channelDescription: 'Menangkap notifikasi aplikasi',
-      channelImportance: NotificationChannelImportance.LOW,
-      priority: NotificationPriority.LOW,
-      onlyAlertOnce: true,
-    ),
-    iosNotificationOptions: const IOSNotificationOptions(
-      showNotification: false,
-      playSound: false,
-    ),
-    foregroundTaskOptions: ForegroundTaskOptions(
-      autoRunOnBoot: false,
-      autoRunOnMyPackageReplaced: false,
-      allowWakeLock: true,
-      allowWifiLock: false,
-      eventAction: ForegroundTaskEventAction.nothing(),
-    ),
-  );
 
   Widget initialPage = const LoginPage();
   try {
@@ -176,71 +130,42 @@ class MyApp extends StatefulWidget {
   State<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+class _MyAppState extends State<MyApp> {
   final List<ServiceNotificationEvent> _preview = [];
   StreamSubscription<ServiceNotificationEvent>? _sub;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    _requestNotifPermission();
-  }
-
-  /// Lifecycle observer → cek ulang izin saat resume (user balik dari Settings)
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _checkAndRestartListener();
-    }
-  }
-
-  Future<void> _requestNotifPermission() async {
-    final granted = await NotificationListenerService.isPermissionGranted();
-    if (!granted) {
-      final ok = await NotificationListenerService.requestPermission();
-      if (!ok) {
-        debugPrint("⚠️ User tidak memberikan izin notifikasi");
-        return;
-      }
-    }
     _initNotifListener();
   }
 
-  Future<void> _checkAndRestartListener() async {
-    final granted = await NotificationListenerService.isPermissionGranted();
-    if (granted && _sub == null) {
-      debugPrint("🔄 Restart listener setelah izin diberikan");
-      _initNotifListener();
-    }
-  }
-
   Future<void> _initNotifListener() async {
-    try {
-      _sub?.cancel(); // pastikan tidak double
-      _sub = NotificationListenerService.notificationsStream.listen((event) {
-        if (!mounted) return;
-        notificationStreamController.add(event);
-
-        setState(() {
-          _preview.insert(0, event);
-          if (_preview.length > 5) {
-            _preview.removeRange(5, _preview.length);
-          }
-        });
-
-        log("📩 Notifikasi masuk: ${event.packageName} - ${event.title}");
-      }, onError: (e) {
-        debugPrint('notif stream error: $e');
-      });
-    } catch (e, st) {
-      debugPrint("Listener error: $e\n$st");
+    final granted = await NotificationListenerService.isPermissionGranted();
+    if (!granted) {
+      debugPrint("⚠️ Izin notifikasi belum diberikan");
+      return;
     }
+
+    _sub = NotificationListenerService.notificationsStream.listen((event) {
+      if (!mounted) return;
+      notificationStreamController.add(event);
+
+      setState(() {
+        _preview.insert(0, event);
+        if (_preview.length > 5) {
+          _preview.removeRange(5, _preview.length);
+        }
+      });
+
+      log("📩 Notifikasi masuk: ${event.packageName} - ${event.title}");
+    }, onError: (e) {
+      debugPrint('notif stream error: $e');
+    });
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _sub?.cancel();
     super.dispose();
   }
@@ -251,10 +176,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       navigatorKey: navigatorKey,
       title: 'MyXCreate',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        primarySwatch: Colors.indigo,
-        scaffoldBackgroundColor: Colors.grey.shade100,
-      ),
+      theme: ThemeData(primarySwatch: Colors.deepPurple),
       home: Stack(
         children: [
           DeepLinkWrapper(initialPage: widget.initialPage),
@@ -287,21 +209,18 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   Widget _buildPreviewCard(ServiceNotificationEvent e) {
     return Card(
-      color: Colors.white,
       elevation: 6,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       child: ListTile(
         leading: (e.appIcon != null)
             ? Image.memory(e.appIcon!, width: 40, height: 40)
-            : const Icon(Icons.notifications, color: Colors.indigo),
+            : const Icon(Icons.notifications),
         title: Text(e.title ?? 'No title',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontWeight: FontWeight.bold)),
+            maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: Text(e.content ?? 'No content',
             maxLines: 1, overflow: TextOverflow.ellipsis),
         trailing: IconButton(
-            icon: const Icon(Icons.chevron_right, color: Colors.indigo),
+            icon: const Icon(Icons.chevron_right),
             onPressed: () =>
                 navigatorKey.currentState?.pushNamed('/user_notif')),
       ),
@@ -309,7 +228,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 }
 
-/// DeepLinkWrapper
+/// DeepLinkWrapper (biarkan sama)
 class DeepLinkWrapper extends StatefulWidget {
   final Widget initialPage;
   const DeepLinkWrapper({Key? key, required this.initialPage}) : super(key: key);
@@ -374,17 +293,15 @@ class _CustomSplashPageState extends State<CustomSplashPage> {
   void initState() {
     super.initState();
     Timer(const Duration(seconds: 2), () {
-      if (mounted) {
-        Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => widget.nextPage));
-      }
+      Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => widget.nextPage));
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.indigo,
+      backgroundColor: Colors.deepPurple,
       body: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
