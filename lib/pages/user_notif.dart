@@ -1,9 +1,13 @@
 // lib/pages/user_notif.dart
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:installed_apps/app_info.dart';
+import 'package:notification_listener_service/notification_event.dart';
 import '../services/notification_capture.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
+import 'package:http/http.dart' as http;
 
 class UserNotifPage extends StatefulWidget {
   const UserNotifPage({Key? key}) : super(key: key);
@@ -21,24 +25,41 @@ class _UserNotifPageState extends State<UserNotifPage>
   List<Map<String, dynamic>> _captured = [];
   final _webhookCtrl = TextEditingController();
   final _searchCtrl = TextEditingController();
-  bool _loading = true;
   bool _serviceRunning = false;
   bool _notifPermissionGranted = false;
+
+  StreamSubscription<ServiceNotificationEvent>? _notifSub;
 
   @override
   void initState() {
     super.initState();
     _tab = TabController(length: 2, vsync: this);
     _searchCtrl.addListener(_applySearch);
-    _loadAll();
+    _initAll();
+
+    // Subscribe ke notifikasi
+    _notifSub = NotificationListenerService.notificationsStream.listen((event) async {
+      if (event.packageName == null) return;
+      final prefsSelected = await NotifService.getSelectedPackages();
+      if (prefsSelected.contains(event.packageName)) {
+        await _refreshCaptured();
+        await _sendToWebhook(event);
+      }
+    });
   }
 
-  Future<void> _loadAll() async {
-    setState(() => _loading = true);
-
-    // pastikan service init
+  Future<void> _initAll() async {
     await NotifService.ensureStarted();
+    await _loadData();
+    final granted = await NotificationListenerService.isPermissionGranted();
+    final running = await FlutterForegroundTask.isRunningService;
+    setState(() {
+      _notifPermissionGranted = granted;
+      _serviceRunning = running;
+    });
+  }
 
+  Future<void> _loadData() async {
     final apps = await NotifService.getInstalledApps();
     final selected = await NotifService.getSelectedPackages();
     final captured = await NotifService.getCaptured();
@@ -49,13 +70,11 @@ class _UserNotifPageState extends State<UserNotifPage>
     final enriched = captured.map((m) {
       final pkg = m['package']?.toString() ?? '';
       final enrichedMap = Map<String, dynamic>.from(m);
-      enrichedMap['appName'] =
-          (m['appName']?.toString().isNotEmpty ?? false) ? m['appName'] : (appMap[pkg] ?? pkg);
+      enrichedMap['appName'] = (m['appName']?.toString().isNotEmpty ?? false)
+          ? m['appName']
+          : (appMap[pkg] ?? pkg);
       return enrichedMap;
     }).toList();
-
-    final notifGranted = await NotificationListenerService.isPermissionGranted();
-    final running = await _isForegroundServiceRunning();
 
     setState(() {
       _apps = apps;
@@ -63,18 +82,7 @@ class _UserNotifPageState extends State<UserNotifPage>
       _selectedPkgs = selected;
       _captured = enriched;
       _webhookCtrl.text = webhook;
-      _loading = false;
-      _notifPermissionGranted = notifGranted;
-      _serviceRunning = running;
     });
-  }
-
-  Future<bool> _isForegroundServiceRunning() async {
-    try {
-      return await FlutterForegroundTask.isRunningService;
-    } catch (_) {
-      return false;
-    }
   }
 
   void _applySearch() {
@@ -97,35 +105,28 @@ class _UserNotifPageState extends State<UserNotifPage>
     final enriched = data.map((m) {
       final pkg = m['package']?.toString() ?? '';
       final enrichedMap = Map<String, dynamic>.from(m);
-      enrichedMap['appName'] =
-          (m['appName']?.toString().isNotEmpty ?? false) ? m['appName'] : (appMap[pkg] ?? pkg);
+      enrichedMap['appName'] = (m['appName']?.toString().isNotEmpty ?? false)
+          ? m['appName']
+          : (appMap[pkg] ?? pkg);
       return enrichedMap;
     }).toList();
     setState(() => _captured = enriched);
   }
 
   Future<void> _startService() async {
-    try {
-      await NotifService.ensureStarted();
-    } catch (err) {
-      debugPrint('startService error: $err');
-    }
-    final running = await _isForegroundServiceRunning();
+    await NotifService.startForegroundService();
+    final running = await FlutterForegroundTask.isRunningService;
     setState(() => _serviceRunning = running);
   }
 
   Future<void> _stopService() async {
-    try {
-      await FlutterForegroundTask.stopService();
-    } catch (err) {
-      debugPrint('stop service error: $err');
-    }
-    setState(() => _serviceRunning = false);
+    await NotifService.stopForegroundService();
+    final running = await FlutterForegroundTask.isRunningService;
+    setState(() => _serviceRunning = running);
   }
 
   Future<void> _openNotifAccessSettings() async {
     await NotificationListenerService.requestPermission();
-    // user harus kembali ke app sendiri, reload status
     final granted = await NotificationListenerService.isPermissionGranted();
     setState(() => _notifPermissionGranted = granted);
   }
@@ -135,12 +136,82 @@ class _UserNotifPageState extends State<UserNotifPage>
     await _refreshCaptured();
   }
 
+  /// Kirim notifikasi ke webhook
+  Future<void> _sendToWebhook(ServiceNotificationEvent event) async {
+    final url = _webhookCtrl.text.trim();
+    if (url.isEmpty) return;
+
+    final appName = (event.appName != null && event.appName!.isNotEmpty)
+        ? event.appName!
+        : (event.packageName ?? 'unknown');
+
+    final title = (event.title ?? event.text ?? event.content ?? '').toString();
+    final text = (event.content ?? event.text ?? event.title ?? '').toString();
+
+    final data = {
+      "app": appName,
+      "title": title,
+      "text": text,
+    };
+
+    try {
+      final resp = await http.post(
+        Uri.parse(url),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode(data),
+      );
+      debugPrint('Webhook status: ${resp.statusCode}');
+    } catch (e) {
+      debugPrint('⚠️ Gagal kirim ke webhook: $e');
+    }
+  }
+
   @override
   void dispose() {
     _tab.dispose();
     _webhookCtrl.dispose();
     _searchCtrl.dispose();
+    _notifSub?.cancel();
     super.dispose();
+  }
+
+  Widget _buildHeaderButtons() {
+    return Wrap(
+      spacing: 12,
+      runSpacing: 8,
+      children: [
+        ElevatedButton.icon(
+          icon: Icon(_notifPermissionGranted ? Icons.check : Icons.notifications_off),
+          label: Text(_notifPermissionGranted ? 'Akses Notif: Terpasang' : 'Berikan Akses Notifikasi'),
+          onPressed: _openNotifAccessSettings,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: _notifPermissionGranted ? Colors.green : Colors.deepPurple,
+          ),
+        ),
+        ElevatedButton.icon(
+          icon: Icon(_serviceRunning ? Icons.pause : Icons.play_arrow),
+          label: Text(_serviceRunning ? 'Hentikan Background' : 'Jalankan di Background'),
+          onPressed: _serviceRunning ? _stopService : _startService,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: _serviceRunning ? Colors.orange : Colors.deepPurple,
+          ),
+        ),
+        ElevatedButton.icon(
+          icon: const Icon(Icons.refresh),
+          label: const Text('Muat ulang'),
+          onPressed: () async {
+            await _loadData();
+            await _refreshCaptured();
+            final running = await FlutterForegroundTask.isRunningService;
+            final granted = await NotificationListenerService.isPermissionGranted();
+            setState(() {
+              _serviceRunning = running;
+              _notifPermissionGranted = granted;
+            });
+          },
+        ),
+      ],
+    );
   }
 
   @override
@@ -161,150 +232,160 @@ class _UserNotifPageState extends State<UserNotifPage>
               Tab(icon: Icon(Icons.notifications), text: 'Riwayat Notifikasi'),
             ],
           ),
-          actions: [
-            IconButton(onPressed: _loadAll, icon: const Icon(Icons.refresh)),
-          ],
         ),
-        body: _loading ? const Center(child: CircularProgressIndicator()) : TabBarView(
+        body: TabBarView(
           controller: _tab,
           children: [
-            _buildFilterTab(),
-            _buildCapturedTab(),
+            // --- FILTER TAB ---
+            Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Column(
+                children: [
+                  _buildHeaderButtons(),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _webhookCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Webhook (opsional)',
+                            hintText: 'https://server/receive',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      ElevatedButton(
+                        onPressed: () async {
+                          await NotifService.setWebhook(_webhookCtrl.text.trim());
+                          if (mounted) ScaffoldMessenger.of(context)
+                              .showSnackBar(const SnackBar(content: Text('Webhook disimpan')));
+                        },
+                        child: const Text('Simpan'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _searchCtrl,
+                    decoration: const InputDecoration(
+                        prefixIcon: Icon(Icons.search),
+                        hintText: 'Cari aplikasi...'),
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: _filteredApps.isEmpty
+                        ? const Center(child: Text('Tidak ada aplikasi'))
+                        : ListView.builder(
+                            itemCount: _filteredApps.length,
+                            itemBuilder: (_, i) {
+                              final a = _filteredApps[i];
+                              final enabled = _selectedPkgs.contains(a.packageName);
+                              return Card(
+                                color: enabled ? Colors.deepPurple.shade50 : null,
+                                margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                                child: ListTile(
+                                  leading: a.icon != null
+                                      ? Image.memory(a.icon!, width: 36, height: 36)
+                                      : const Icon(Icons.apps, color: Colors.deepPurple),
+                                  title: Text(a.name),
+                                  subtitle: Text(a.packageName, style: const TextStyle(fontSize: 12)),
+                                  trailing: Switch(value: enabled, onChanged: (_) => _toggle(a.packageName)),
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            ),
+
+            // --- CAPTURED TAB ---
+            RefreshIndicator(
+              onRefresh: _refreshCaptured,
+              child: _captured.isEmpty
+                  ? ListView(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.all(24.0),
+                          child: Column(
+                            children: const [
+                              Icon(Icons.inbox, size: 56, color: Colors.grey),
+                              SizedBox(height: 12),
+                              Text('Belum ada notifikasi yang ditangkap', style: TextStyle(color: Colors.grey)),
+                            ],
+                          ),
+                        )
+                      ],
+                    )
+                  : ListView.separated(
+                      padding: const EdgeInsets.only(bottom: 16),
+                      itemCount: _captured.length + 1,
+                      separatorBuilder: (_, __) => const Divider(height: 0),
+                      itemBuilder: (ctx, i) {
+                        if (i == 0) {
+                          return Padding(
+                            padding: const EdgeInsets.all(12.0),
+                            child: Row(
+                              children: [
+                                ElevatedButton.icon(
+                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade400),
+                                  onPressed: () async {
+                                    await NotifService.clearCaptured();
+                                    await _refreshCaptured();
+                                  },
+                                  icon: const Icon(Icons.delete_sweep),
+                                  label: const Text('Hapus semua'),
+                                ),
+                                const SizedBox(width: 12),
+                                OutlinedButton.icon(onPressed: _refreshCaptured, icon: const Icon(Icons.refresh), label: const Text('Muat ulang'))
+                              ],
+                            ),
+                          );
+                        }
+                        final n = _captured[i - 1];
+                        return Card(
+                          margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                          child: ListTile(
+                            leading: const Icon(Icons.notifications, color: Colors.deepPurple),
+                            title: Text(n['title']?.toString() ?? '', maxLines: 1, overflow: TextOverflow.ellipsis),
+                            subtitle: Text('${n['appName'] ?? n['package']} • ${n['content'] ?? ''}', maxLines: 2, overflow: TextOverflow.ellipsis),
+                            trailing: Wrap(spacing: 6, children: [
+                              Text((n['timestamp'] ?? '').toString().split('T').first, style: const TextStyle(fontSize: 11)),
+                              IconButton(icon: const Icon(Icons.delete, color: Colors.red, size: 20), onPressed: () => _deleteCapturedAt(i - 1)),
+                            ]),
+                            onTap: () {
+                              showDialog(context: context, builder: (_) {
+                                return AlertDialog(
+                                  title: Text(n['title'] ?? 'Tanpa Judul'),
+                                  content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                    Text('Aplikasi: ${n['appName'] ?? n['package']}'),
+                                    const SizedBox(height: 8),
+                                    Text('Package: ${n['package']}'),
+                                    const SizedBox(height: 8),
+                                    Text('Isi: ${n['content']}'),
+                                    const SizedBox(height: 8),
+                                    Text('Waktu: ${n['timestamp']}'),
+                                  ]),
+                                  actions: [ TextButton(onPressed: () => Navigator.pop(context), child: const Text('Tutup')) ],
+                                );
+                              });
+                            },
+                          ),
+                        );
+                      },
+                    ),
+            ),
           ],
         ),
       ),
     );
   }
+}
 
-  Widget _buildFilterTab() {
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(12.0),
-          child: Row(
-            children: [
-              Icon(_notifPermissionGranted ? Icons.notifications_active : Icons.notifications_off, color: Colors.deepPurple),
-              const SizedBox(width: 12),
-              ElevatedButton(
-                onPressed: _openNotifAccessSettings,
-                child: Text(_notifPermissionGranted ? 'Izin Notifikasi: Terpasang' : 'Berikan Akses Notifikasi'),
-              ),
-              const SizedBox(width: 12),
-              ElevatedButton(
-                onPressed: _serviceRunning ? _stopService : _startService,
-                child: Text(_serviceRunning ? 'Hentikan Service' : 'Jalankan di Background'),
-              )
-            ],
-          ),
-        ),
-
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12.0),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _webhookCtrl,
-                  decoration: InputDecoration(labelText: 'Webhook (opsional)', hintText: 'https://server/receive'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton(
-                onPressed: () async {
-                  await NotifService.setWebhook(_webhookCtrl.text.trim());
-                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Webhook disimpan')));
-                },
-                child: const Text('Simpan'),
-              )
-            ],
-          ),
-        ),
-
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-          child: TextField(
-            controller: _searchCtrl,
-            decoration: InputDecoration(prefixIcon: const Icon(Icons.search), hintText: 'Cari aplikasi...'),
-          ),
-        ),
-
-        Expanded(
-          child: ListView.builder(
-            itemCount: _filteredApps.length,
-            itemBuilder: (_, i) {
-              final a = _filteredApps[i];
-              final enabled = _selectedPkgs.contains(a.packageName);
-              return Card(
-                color: enabled ? Colors.deepPurple.shade50 : null,
-                margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                child: ListTile(
-                  leading: a.icon != null ? Image.memory(a.icon!, width: 36, height: 36) : const Icon(Icons.apps, color: Colors.deepPurple),
-                  title: Text(a.name),
-                  subtitle: Text(a.packageName, style: const TextStyle(fontSize: 12)),
-                  trailing: Switch(value: enabled, onChanged: (_) => _toggle(a.packageName)),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildCapturedTab() {
-    return RefreshIndicator(
-      onRefresh: _refreshCaptured,
-      child: _captured.isEmpty ? const Center(child: Text('Belum ada notifikasi')) : ListView.separated(
-        padding: const EdgeInsets.only(bottom: 16),
-        itemCount: _captured.length + 1,
-        separatorBuilder: (_, __) => const Divider(height: 0),
-        itemBuilder: (ctx, i) {
-          if (i == 0) {
-            return Padding(
-              padding: const EdgeInsets.all(12.0),
-              child: Row(
-                children: [
-                  ElevatedButton.icon(
-                    onPressed: () async { await NotifService.clearCaptured(); await _refreshCaptured(); },
-                    icon: const Icon(Icons.delete_sweep), label: const Text('Hapus semua')),
-                  const SizedBox(width: 12),
-                  OutlinedButton.icon(onPressed: _refreshCaptured, icon: const Icon(Icons.refresh), label: const Text('Muat ulang'))
-                ],
-              ),
-            );
-          }
-          final n = _captured[i - 1];
-          return Card(
-            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            child: ListTile(
-              leading: const Icon(Icons.notifications, color: Colors.deepPurple),
-              title: Text(n['title']?.toString() ?? '', maxLines: 1, overflow: TextOverflow.ellipsis),
-              subtitle: Text('${n['appName'] ?? n['package']} • ${n['content'] ?? ''}', maxLines: 2, overflow: TextOverflow.ellipsis),
-              trailing: Wrap(spacing: 4, children: [
-                Text((n['timestamp'] ?? '').toString().split('T').first, style: const TextStyle(fontSize: 11)),
-                IconButton(icon: const Icon(Icons.delete, color: Colors.red, size: 20), onPressed: () => _deleteCapturedAt(i - 1)),
-              ]),
-              onTap: () {
-                showDialog(context: context, builder: (_) {
-                  return AlertDialog(
-                    title: Text(n['title'] ?? 'Tanpa Judul'),
-                    content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text('Aplikasi: ${n['appName'] ?? n['package']}'),
-                      const SizedBox(height: 8),
-                      Text('Package: ${n['package']}'),
-                      const SizedBox(height: 8),
-                      Text('Isi: ${n['content']}'),
-                      const SizedBox(height: 8),
-                      Text('Waktu: ${n['timestamp']}'),
-                    ]),
-                    actions: [ TextButton(onPressed: () => Navigator.pop(context), child: const Text('Tutup')) ],
-                  );
-                });
-              },
-            ),
-          );
-        },
-      ),
-    );
-  }
+extension on ServiceNotificationEvent {
+  get appName => null;
+  
+  get text => null;
 }

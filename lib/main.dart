@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
@@ -28,12 +29,12 @@ import 'store/store.dart';
 import 'xcode_edit/xcodeedit.dart';
 
 const String apiUrl = "https://api.xcreate.my.id/myxcreate/cek_update_apk.php";
-
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  FlutterNativeSplash.preserve(widgetsBinding: WidgetsFlutterBinding.ensureInitialized());
+  FlutterNativeSplash.preserve(
+      widgetsBinding: WidgetsFlutterBinding.ensureInitialized());
 
   if (kIsWeb) {
     runApp(const MaterialApp(
@@ -58,10 +59,11 @@ Future<void> main() async {
 
   FlutterNativeSplash.remove();
 
-  // Start notification listener
+  // Start notification listener in background
   Future.microtask(() async {
     try {
       await NotifService.ensureStarted();
+      log("✅ NotifService started");
     } catch (e, st) {
       debugPrint('⚠️ Gagal start NotifService: $e\n$st');
     }
@@ -74,16 +76,22 @@ Future<Widget> _checkLoginAndVersion() async {
   final localVersion = packageInfo.version;
 
   try {
-    final uri = Uri.parse("$apiUrl?t=${DateTime.now().millisecondsSinceEpoch}");
+    final uri =
+        Uri.parse("$apiUrl?t=${DateTime.now().millisecondsSinceEpoch}");
     final response = await http.get(uri);
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
       final latestVersion = (data['versi'] ?? "").toString();
-      final changelog = (data['changelog'] ?? "Tidak ada catatan perubahan.").toString();
-      final tanggalUpdate = (data['tanggalUpdate'] ?? data['tanggal_update'] ?? "-").toString();
-      final downloadUrl = (data['url_apk'] ?? data['url_download'] ?? "").toString();
+      final changelog =
+          (data['changelog'] ?? "Tidak ada catatan perubahan.").toString();
+      final tanggalUpdate =
+          (data['tanggalUpdate'] ?? data['tanggal_update'] ?? "-").toString();
+      final downloadUrl =
+          (data['url_apk'] ?? data['url_download'] ?? "").toString();
 
-      if (latestVersion.isNotEmpty && downloadUrl.isNotEmpty && _isVersionLower(localVersion, latestVersion)) {
+      if (latestVersion.isNotEmpty &&
+          downloadUrl.isNotEmpty &&
+          _isVersionLower(localVersion, latestVersion)) {
         return UpdatePage(
           versi: latestVersion,
           changelog: changelog,
@@ -103,8 +111,11 @@ Future<Widget> _checkLoginAndVersion() async {
 
 bool _isVersionLower(String current, String latest) {
   final currParts = current.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-  final latestParts = latest.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-  final maxLength = currParts.length > latestParts.length ? currParts.length : latestParts.length;
+  final latestParts =
+      latest.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+  final maxLength = currParts.length > latestParts.length
+      ? currParts.length
+      : latestParts.length;
 
   while (currParts.length < maxLength) currParts.add(0);
   while (latestParts.length < maxLength) latestParts.add(0);
@@ -142,7 +153,8 @@ class MyApp extends StatelessWidget {
         '/login': (_) => const LoginPage(),
         '/tambah_pembayaran_pg': (_) => const PembayaranServicePage(),
         '/atur_koneksi_pg': (_) => const KoneksiPgPage(),
-        '/koneksi_transfer_saldo': (_) => const KoneksiTransferSaldoPage(),
+        '/koneksi_transfer_saldo': (_) =>
+            const KoneksiTransferSaldoPage(),
         '/upload_produk': (_) => const UploadProdukPage(),
         '/store': (_) => const StorePage(),
         '/xcedit': (_) => XcodeEditPage(),
@@ -214,7 +226,8 @@ class _CustomSplashPageState extends State<CustomSplashPage> {
   void initState() {
     super.initState();
     Timer(const Duration(seconds: 2), () {
-      Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => widget.nextPage));
+      Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => widget.nextPage));
     });
   }
 
@@ -228,7 +241,8 @@ class _CustomSplashPageState extends State<CustomSplashPage> {
           children: [
             Image.asset('assets/x.png', width: 150, height: 150),
             const SizedBox(height: 20),
-            const CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(Colors.white)),
+            const CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white)),
           ],
         ),
       ),

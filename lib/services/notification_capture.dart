@@ -188,6 +188,10 @@ class NotifService {
       await prefs.setString(_keyWebhook, url);
     }
   }
+
+  static Future<void> startForegroundService() async {}
+
+  static Future<void> stopForegroundService() async {}
 }
 
 /// Foreground Task handler
