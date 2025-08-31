@@ -93,13 +93,13 @@ Future<void> main() async {
       playSound: false,
     ),
     foregroundTaskOptions: ForegroundTaskOptions(
-          autoRunOnBoot: false,
-          autoRunOnMyPackageReplaced: false,
-          allowWakeLock: true,
-          allowWifiLock: false,
-          eventAction: ForegroundTaskEventAction.nothing(),
-        ),
-      );
+      autoRunOnBoot: false,
+      autoRunOnMyPackageReplaced: false,
+      allowWakeLock: true,
+      allowWifiLock: false, 
+      eventAction: ForegroundTaskEventAction.nothing(),
+    ),
+  );
 
   Widget initialPage = const LoginPage();
   try {
@@ -183,17 +183,24 @@ class _MyAppState extends State<MyApp> {
   @override
   void initState() {
     super.initState();
+    _requestNotifPermission();
+  }
+
+  /// Minta izin notifikasi langsung saat startup
+  Future<void> _requestNotifPermission() async {
+    final granted = await NotificationListenerService.isPermissionGranted();
+    if (!granted) {
+      final ok = await NotificationListenerService.requestPermission();
+      if (!ok) {
+        debugPrint("⚠️ User tidak memberikan izin notifikasi");
+        return;
+      }
+    }
     _initNotifListener();
   }
 
   Future<void> _initNotifListener() async {
     try {
-      final granted = await NotificationListenerService.isPermissionGranted();
-      if (!granted) {
-        debugPrint("⚠️ Izin notifikasi belum diberikan");
-        return;
-      }
-
       _sub = NotificationListenerService.notificationsStream.listen((event) {
         if (!mounted) return;
         notificationStreamController.add(event);
