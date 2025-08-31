@@ -1,70 +1,48 @@
-// lib/main.dart
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
-import 'package:flutter/foundation.dart' show kIsWeb, Uint8List;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
-import 'package:myxcreate/menu_fitur/midtrans/koneksi_midtrans.dart';
-import 'package:myxcreate/menu_fitur/midtrans/riwayat.dart';
+import 'package:myxcreate/store/detail.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:http/http.dart' as http;
 import 'package:app_links/app_links.dart';
-
-// notification plugin
 import 'package:notification_listener_service/notification_event.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
 
-// app pages / services (sesuaikan path jika berbeda)
+// Halaman-halaman
 import 'auth/login.dart';
 import 'main_page.dart';
+import 'menu_fitur/midtrans/koneksi_midtrans.dart';
+import 'menu_fitur/midtrans/riwayat.dart';
 import 'update_page.dart';
-import 'store/detail.dart';
-import 'web.dart';
-import 'pages/user_notif.dart';
+import 'menu_fitur/atur_koneksi_pg.dart';
 import 'menu_fitur/dashboard_pembayaran.dart';
+import 'menu_fitur/koneksi_transfer_saldo.dart';
 import 'menu_fitur/riwayat_transfer.dart';
 import 'menu_fitur/pembayaran_service.dart';
-import 'menu_fitur/atur_koneksi_pg.dart';
-import 'menu_fitur/koneksi_transfer_saldo.dart';
 import 'menu_fitur/upload_produk.dart';
 import 'store/store.dart';
 import 'xcode_edit/xcodeedit.dart';
+import 'web.dart';
+import 'pages/user_notif.dart';
 
+/// API Cek Versi
 const String apiUrl = "https://api.xcreate.my.id/myxcreate/cek_update_apk.php";
+
+/// Global navigator key agar bisa navigasi dari mana saja
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-/// Global broadcast controller supaya halaman lain (user_notif.dart) bisa
-/// listen dan menampilkan event notifikasi secara real-time.
-final StreamController<ServiceNotificationEvent> notificationStreamController =
-    StreamController<ServiceNotificationEvent>.broadcast();
+/// Global notifikasi yang didapat
+List<ServiceNotificationEvent> globalNotifications = [];
 
-/// Untuk memudahkan akses: gunakan `notificationStreamController.stream`
-Stream<ServiceNotificationEvent> get notificationStream =>
-    notificationStreamController.stream;
-
-class MainOverlayNotification {
-  final String? title;
-  final String? content;
-  final Uint8List? icon;
-  final String? packageName;
-  final DateTime receivedAt;
-
-  MainOverlayNotification({
-    this.title,
-    this.content,
-    this.icon,
-    this.packageName,
-    required this.receivedAt,
-  });
-}
+// ignore: unused_element
+StreamSubscription<ServiceNotificationEvent>? _notifSubscription;
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-
-  // preserve native splash until runApp is ready (optional)
-  FlutterNativeSplash.preserve(widgetsBinding: WidgetsFlutterBinding.ensureInitialized());
+  WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
 
   if (kIsWeb) {
     runApp(const MaterialApp(
@@ -74,51 +52,40 @@ Future<void> main() async {
     return;
   }
 
+  // Splash bawaan flutter_native_splash
+  FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
+
+  // Init notification listener
+  await _initNotificationListener();
+
   Widget initialPage = const LoginPage();
   try {
     initialPage = await _checkLoginAndVersion();
   } catch (e, stack) {
-    debugPrint('❌ Error inisialisasi: $e\n$stack');
+    debugPrint('❌ Error saat inisialisasi: $e\n$stack');
   }
 
-  // Run app (MyApp hanya bertugas sebagai shell & meneruskan notifikasi ke stream)
   runApp(MyApp(initialPage: initialPage));
 
-  // remove native splash
   FlutterNativeSplash.remove();
-
-  // Mulai forward stream dari plugin -> notificationStreamController
-  // (tidak meminta permission di sini; user harus mengizinkan di user_notif.dart)
-  _attachPluginStream();
 }
 
-/// Pasang listener plugin dan forward event ke notificationStreamController
-void _attachPluginStream() {
-  try {
-    // jangan paksa request permission di sini — hanya forward bila plugin mengirim event
-    NotificationListenerService.notificationsStream.listen(
-      (ServiceNotificationEvent? e) {
-        if (e == null) return;
-
-        // forward event ke controller agar UI bisa mendengarkan
-        try {
-          notificationStreamController.add(e);
-          log('Forwarded notification: pkg=${e.packageName} title=${e.title}');
-        } catch (ex) {
-          debugPrint('❌ Failed to forward notification: $ex');
-        }
-      },
-      onError: (err) {
-        debugPrint('Stream error (notification plugin): $err');
-      },
-      cancelOnError: false,
-    );
-  } catch (e) {
-    debugPrint('Failed to attach plugin stream: $e');
+/// Inisialisasi notification listener
+Future<void> _initNotificationListener() async {
+  final hasPermission = await NotificationListenerService.isPermissionGranted();
+  if (!hasPermission) {
+    await NotificationListenerService.requestPermission();
   }
+
+  // Mulai stream
+  _notifSubscription =
+      NotificationListenerService.notificationsStream.listen((event) {
+    log("📩 Notifikasi baru: ${event.title} - ${event.content}");
+    globalNotifications.insert(0, event);
+  });
 }
 
-/// Cek login & versi update (sama seperti sebelumnya)
+/// Cek login & versi
 Future<Widget> _checkLoginAndVersion() async {
   final prefs = await SharedPreferences.getInstance();
   final packageInfo = await PackageInfo.fromPlatform();
@@ -127,14 +94,20 @@ Future<Widget> _checkLoginAndVersion() async {
   try {
     final uri = Uri.parse("$apiUrl?t=${DateTime.now().millisecondsSinceEpoch}");
     final response = await http.get(uri);
+
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
       final latestVersion = (data['versi'] ?? "").toString();
-      final changelog = (data['changelog'] ?? "Tidak ada catatan perubahan.").toString();
-      final tanggalUpdate = (data['tanggalUpdate'] ?? data['tanggal_update'] ?? "-").toString();
-      final downloadUrl = (data['url_apk'] ?? data['url_download'] ?? "").toString();
+      final changelog =
+          (data['changelog'] ?? "Tidak ada catatan perubahan.").toString();
+      final tanggalUpdate =
+          (data['tanggalUpdate'] ?? data['tanggal_update'] ?? "-").toString();
+      final downloadUrl =
+          (data['url_apk'] ?? data['url_download'] ?? "").toString();
 
-      if (latestVersion.isNotEmpty && downloadUrl.isNotEmpty && _isVersionLower(localVersion, latestVersion)) {
+      if (latestVersion.isNotEmpty &&
+          downloadUrl.isNotEmpty &&
+          _isVersionLower(localVersion, latestVersion)) {
         return UpdatePage(
           versi: latestVersion,
           changelog: changelog,
@@ -144,18 +117,25 @@ Future<Widget> _checkLoginAndVersion() async {
       }
     }
   } catch (e) {
-    debugPrint("⚠️ Gagal cek versi: $e");
+    debugPrint("⚠️ Kesalahan koneksi saat cek versi: $e");
   }
 
   final username = prefs.getString('username');
-  if (username != null && username.isNotEmpty) return const MainPage();
+  if (username != null && username.isNotEmpty) {
+    return const MainPage();
+  }
   return const LoginPage();
 }
 
+/// Bandingkan versi aplikasi
 bool _isVersionLower(String current, String latest) {
-  final currParts = current.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-  final latestParts = latest.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-  final maxLength = currParts.length > latestParts.length ? currParts.length : latestParts.length;
+  final currParts =
+      current.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+  final latestParts =
+      latest.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+  final maxLength = currParts.length > latestParts.length
+      ? currParts.length
+      : latestParts.length;
 
   while (currParts.length < maxLength) currParts.add(0);
   while (latestParts.length < maxLength) latestParts.add(0);
@@ -167,48 +147,16 @@ bool _isVersionLower(String current, String latest) {
   return false;
 }
 
-/// MyApp: tetap integrasikan routing / splash seperti project Anda,
-/// tapi *tidak* melakukan permission request di sini.
-class MyApp extends StatefulWidget {
+/// MyApp
+class MyApp extends StatelessWidget {
   final Widget initialPage;
   const MyApp({super.key, required this.initialPage});
-
-  @override
-  State<MyApp> createState() => _MyAppState();
-}
-
-class _MyAppState extends State<MyApp> {
-  // overlay kecil untuk preview notifikasi (opsional)
-  final List<ServiceNotificationEvent> _previewEvents = [];
-
-  StreamSubscription<ServiceNotificationEvent>? _previewSub;
-
-  @override
-  void initState() {
-    super.initState();
-
-    // subscribe ke global notificationStream untuk preview overlay di app
-    _previewSub = notificationStream.listen((event) {
-      setState(() {
-        _previewEvents.insert(0, event);
-        if (_previewEvents.length > 5) _previewEvents.removeRange(5, _previewEvents.length);
-      });
-    }, onError: (e) {
-      debugPrint('preview stream error: $e');
-    });
-  }
-
-  @override
-  void dispose() {
-    _previewSub?.cancel();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       navigatorKey: navigatorKey,
-      title: 'MyXCreate',
+      title: "MyXCreate",
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         primarySwatch: Colors.deepPurple,
@@ -216,60 +164,31 @@ class _MyAppState extends State<MyApp> {
         appBarTheme: const AppBarTheme(
           backgroundColor: Colors.deepPurple,
           foregroundColor: Colors.white,
+          elevation: 0,
         ),
       ),
-      home: Stack(
-        children: [
-          DeepLinkWrapper(initialPage: widget.initialPage),
-          // preview overlay sederhana: klik untuk buka halaman user_notif
-          if (_previewEvents.isNotEmpty)
-            Positioned(
-              bottom: 12,
-              left: 12,
-              right: 12,
-              child: _buildPreviewCard(),
-            ),
-        ],
-      ),
+      home: DeepLinkWrapper(initialPage: initialPage),
       routes: {
-        '/main': (_) => const MainPage(),
-        '/dashboard': (_) => const DashboardPembayaranPage(),
-        '/riwayat_transfer': (_) => const RiwayatTransferPage(),
-        '/login': (_) => const LoginPage(),
-        '/tambah_pembayaran_pg': (_) => const PembayaranServicePage(),
-        '/atur_koneksi_pg': (_) => const KoneksiPgPage(),
-        '/koneksi_transfer_saldo': (_) => const KoneksiTransferSaldoPage(),
-        '/upload_produk': (_) => const UploadProdukPage(),
-        '/store': (_) => const StorePage(),
-        '/xcedit': (_) => XcodeEditPage(),
-        '/riwayat_midtrans': (_) => RiwayatMidtransPage(),
-        '/koneksi_midtrans': (_) => KoneksiMidtransPage(),
-        '/user_notif': (_) => const UserNotifPage(),
+        '/main': (context) => const MainPage(),
+        '/dashboard': (context) => const DashboardPembayaranPage(),
+        '/riwayat_transfer': (context) => const RiwayatTransferPage(),
+        '/login': (context) => const LoginPage(),
+        '/tambah_pembayaran_pg': (context) => const PembayaranServicePage(),
+        '/atur_koneksi_pg': (context) => const KoneksiPgPage(),
+        '/koneksi_transfer_saldo': (context) =>
+            const KoneksiTransferSaldoPage(),
+        '/upload_produk': (context) => const UploadProdukPage(),
+        '/store': (context) => const StorePage(),
+        '/xcedit': (context) => XcodeEditPage(),
+        '/riwayat_midtrans': (context) => RiwayatMidtransPage(),
+        '/koneksi_midtrans': (context) => KoneksiMidtransPage(),
+        '/user_notif': (context) => const UserNotifPage(),
       },
-    );
-  }
-
-  Widget _buildPreviewCard() {
-    final e = _previewEvents.first;
-    return Card(
-      elevation: 6,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      child: ListTile(
-        leading: e.appIcon == null ? null : Image.memory(e.appIcon!, width: 40, height: 40),
-        title: Text(e.title ?? 'No title', maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text(e.content ?? 'No content', maxLines: 1, overflow: TextOverflow.ellipsis),
-        trailing: IconButton(
-          icon: const Icon(Icons.chevron_right),
-          onPressed: () {
-            navigatorKey.currentState?.pushNamed('/user_notif');
-          },
-        ),
-      ),
     );
   }
 }
 
-/// DeepLinkWrapper & CustomSplashPage (sama seperti implementasi Anda)
+/// Wrapper untuk handle deep link
 class DeepLinkWrapper extends StatefulWidget {
   final Widget initialPage;
   const DeepLinkWrapper({super.key, required this.initialPage});
@@ -286,28 +205,34 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
   void initState() {
     super.initState();
     _appLinks = AppLinks();
+
     _initUri();
-    _appLinks.uriLinkStream.listen(_handleLink, onError: (e) => debugPrint('deep link error: $e'));
+
+    _appLinks.uriLinkStream.listen((uri) {
+      _handleLink(uri);
+    });
   }
 
   Future<void> _initUri() async {
     final uri = await _appLinks.getInitialLink();
-    if (uri != null) setState(() => _pendingUri = uri);
+    if (uri != null) {
+      setState(() {
+        _pendingUri = uri;
+      });
+    }
   }
 
   void _handleLink(Uri uri) {
-    try {
-      if (uri.host == "xcreate.my.id") {
-        final idProduk = uri.queryParameters['idproduk'];
-        if (idProduk != null) {
-          navigatorKey.currentState?.pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => DetailPage(idProduk: idProduk)),
-            (_) => false,
-          );
-        }
+    if (uri.host == "xcreate.my.id") {
+      final idProduk = uri.queryParameters['idproduk'];
+      if (idProduk != null) {
+        navigatorKey.currentState?.pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (_) => DetailPage(idProduk: idProduk),
+          ),
+          (route) => false,
+        );
       }
-    } catch (e) {
-      debugPrint('deep link handle error: $e');
     }
   }
 
@@ -315,12 +240,15 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
   Widget build(BuildContext context) {
     if (_pendingUri != null && _pendingUri!.host == "xcreate.my.id") {
       final idProduk = _pendingUri!.queryParameters['idproduk'];
-      if (idProduk != null) return DetailPage(idProduk: idProduk);
+      if (idProduk != null) {
+        return DetailPage(idProduk: idProduk);
+      }
     }
     return CustomSplashPage(nextPage: widget.initialPage);
   }
 }
 
+/// Splash Kustom
 class CustomSplashPage extends StatefulWidget {
   final Widget nextPage;
   const CustomSplashPage({super.key, required this.nextPage});
@@ -334,7 +262,9 @@ class _CustomSplashPageState extends State<CustomSplashPage> {
   void initState() {
     super.initState();
     Timer(const Duration(seconds: 2), () {
-      Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => widget.nextPage));
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => widget.nextPage),
+      );
     });
   }
 
@@ -348,7 +278,9 @@ class _CustomSplashPageState extends State<CustomSplashPage> {
           children: [
             Image.asset('assets/x.png', width: 150, height: 150),
             const SizedBox(height: 20),
-            const CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(Colors.white)),
+            const CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+            ),
           ],
         ),
       ),
