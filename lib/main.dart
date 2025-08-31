@@ -32,7 +32,7 @@ import 'pages/user_notif.dart';
 /// API Cek Versi
 const String apiUrl = "https://api.xcreate.my.id/myxcreate/cek_update_apk.php";
 
-/// Global navigator key agar bisa navigasi dari mana saja
+/// Global navigator key
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 /// Global notifikasi yang didapat
@@ -40,16 +40,14 @@ List<ServiceNotificationEvent> globalNotifications = [];
 
 StreamSubscription<ServiceNotificationEvent>? _notifSubscription;
 
-/// Global log untuk post notifikasi
+/// Global log
 List<String> notifLogs = [];
 
-/// Fungsi helper untuk menambahkan log
+/// Tambah log
 void addNotifLog(String message) {
   final time = DateTime.now().toIso8601String();
   notifLogs.insert(0, "[$time] $message");
-  if (notifLogs.length > 200) {
-    notifLogs.removeLast(); // biar tidak unlimited
-  }
+  if (notifLogs.length > 200) notifLogs.removeLast();
 }
 
 Future<void> main() async {
@@ -63,10 +61,9 @@ Future<void> main() async {
     return;
   }
 
-  // Splash bawaan flutter_native_splash
   FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
 
-  // Init notification listener
+  // init listener
   await _initNotificationListener();
 
   Widget initialPage = const LoginPage();
@@ -81,7 +78,7 @@ Future<void> main() async {
   FlutterNativeSplash.remove();
 }
 
-/// Inisialisasi notification listener
+/// Init notification listener
 Future<void> _initNotificationListener() async {
   try {
     final hasPermission =
@@ -89,48 +86,50 @@ Future<void> _initNotificationListener() async {
     if (!hasPermission) {
       final granted = await NotificationListenerService.requestPermission();
       log("🔔 Permission diberikan? $granted");
+      if (!granted) return; // stop kalau user tidak izinkan
     }
 
-    // cancel listener lama jika ada
     await _notifSubscription?.cancel();
 
-    // Start stream notification
     _notifSubscription =
         NotificationListenerService.notificationsStream.listen((event) async {
-      log("📩 Notifikasi baru: ${event.title} - ${event.content}");
-      globalNotifications.insert(0, event);
+      try {
+        final pkg = event.packageName ?? "-";
+        final title = event.title ?? "-";
+        final text = event.content ?? "-";
 
-      // Ambil prefs untuk cek app yang dipilih dan URL
-      final prefs = await SharedPreferences.getInstance();
-      final selectedApps = prefs.getStringList("selectedApps") ?? [];
-      final postUrl = prefs.getString("notifPostUrl");
+        log("📩 Notifikasi: $pkg | $title - $text");
+        globalNotifications.insert(0, event);
 
-      if (postUrl != null &&
-          postUrl.isNotEmpty &&
-          selectedApps.contains(event.packageName)) {
-        try {
-          final response = await http.post(
-            Uri.parse(postUrl),
-            body: {
-              "app": event.packageName ?? "-",
-              "title": event.title ?? "-",
-              "text": event.content ?? "-",
-            },
-          );
+        final prefs = await SharedPreferences.getInstance();
+        final selectedApps = prefs.getStringList("selectedApps") ?? [];
+        final postUrl = prefs.getString("notifPostUrl");
 
-          if (response.statusCode == 200) {
-            addNotifLog("✅ Success → ${event.packageName} | ${event.title}");
-          } else {
-            addNotifLog(
-                "⚠️ Failed [${response.statusCode}] → ${event.packageName} | ${event.title}");
+        if (postUrl != null &&
+            postUrl.isNotEmpty &&
+            selectedApps.contains(pkg)) {
+          try {
+            final response = await http.post(
+              Uri.parse(postUrl),
+              body: {"app": pkg, "title": title, "text": text},
+            );
+
+            if (response.statusCode == 200) {
+              addNotifLog("✅ Success → $pkg | $title");
+            } else {
+              addNotifLog(
+                  "⚠️ Failed [${response.statusCode}] → $pkg | $title");
+            }
+          } catch (e) {
+            addNotifLog("❌ Error POST → $pkg | $e");
           }
-        } catch (e) {
-          addNotifLog("❌ Error POST → ${event.packageName} | $e");
         }
+      } catch (e) {
+        log("❌ Error handle notif: $e");
       }
     });
   } catch (e) {
-    log("❌ Error inisialisasi notification listener: $e");
+    log("❌ Error init listener: $e");
   }
 }
 
@@ -166,7 +165,7 @@ Future<Widget> _checkLoginAndVersion() async {
       }
     }
   } catch (e) {
-    debugPrint("⚠️ Kesalahan koneksi saat cek versi: $e");
+    debugPrint("⚠️ Error cek versi: $e");
   }
 
   final username = prefs.getString('username');
@@ -176,7 +175,6 @@ Future<Widget> _checkLoginAndVersion() async {
   return const LoginPage();
 }
 
-/// Bandingkan versi aplikasi
 bool _isVersionLower(String current, String latest) {
   final currParts =
       current.split('.').map((e) => int.tryParse(e) ?? 0).toList();
@@ -219,11 +217,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  /// Ketika app dibuka kembali dari background / restart
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      log("🔄 App resumed → cek ulang listener notifikasi");
+      log("🔄 App resumed → cek ulang listener");
       _initNotificationListener();
     }
   }
@@ -264,7 +261,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 }
 
-/// Wrapper untuk handle deep link
+/// DeepLinkWrapper
 class DeepLinkWrapper extends StatefulWidget {
   final Widget initialPage;
   const DeepLinkWrapper({super.key, required this.initialPage});
@@ -290,11 +287,15 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
   }
 
   Future<void> _initUri() async {
-    final uri = await _appLinks.getInitialLink();
-    if (uri != null) {
-      setState(() {
-        _pendingUri = uri;
-      });
+    try {
+      final uri = await _appLinks.getInitialLink();
+      if (uri != null && mounted) {
+        setState(() {
+          _pendingUri = uri;
+        });
+      }
+    } catch (e) {
+      log("⚠️ Error init deeplink: $e");
     }
   }
 
@@ -324,7 +325,7 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
   }
 }
 
-/// Splash Kustom
+/// Custom splash
 class CustomSplashPage extends StatefulWidget {
   final Widget nextPage;
   const CustomSplashPage({super.key, required this.nextPage});
@@ -338,9 +339,11 @@ class _CustomSplashPageState extends State<CustomSplashPage> {
   void initState() {
     super.initState();
     Timer(const Duration(seconds: 2), () {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => widget.nextPage),
-      );
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => widget.nextPage),
+        );
+      }
     });
   }
 
