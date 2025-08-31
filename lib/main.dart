@@ -38,7 +38,6 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 /// Global notifikasi yang didapat
 List<ServiceNotificationEvent> globalNotifications = [];
 
-// ignore: unused_element
 StreamSubscription<ServiceNotificationEvent>? _notifSubscription;
 
 Future<void> main() async {
@@ -72,17 +71,25 @@ Future<void> main() async {
 
 /// Inisialisasi notification listener
 Future<void> _initNotificationListener() async {
-  final hasPermission = await NotificationListenerService.isPermissionGranted();
-  if (!hasPermission) {
-    await NotificationListenerService.requestPermission();
-  }
+  try {
+    final hasPermission = await NotificationListenerService.isPermissionGranted();
+    if (!hasPermission) {
+      final granted = await NotificationListenerService.requestPermission();
+      log("🔔 Permission diberikan? $granted");
+    }
 
-  // Mulai stream
-  _notifSubscription =
-      NotificationListenerService.notificationsStream.listen((event) {
-    log("📩 Notifikasi baru: ${event.title} - ${event.content}");
-    globalNotifications.insert(0, event);
-  });
+    // cancel listener lama jika ada
+    await _notifSubscription?.cancel();
+
+    // Start stream notification
+    _notifSubscription =
+        NotificationListenerService.notificationsStream.listen((event) {
+      log("📩 Notifikasi baru: ${event.title} - ${event.content}");
+      globalNotifications.insert(0, event);
+    });
+  } catch (e) {
+    log("❌ Error inisialisasi notification listener: $e");
+  }
 }
 
 /// Cek login & versi
@@ -148,9 +155,36 @@ bool _isVersionLower(String current, String latest) {
 }
 
 /// MyApp
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   final Widget initialPage;
   const MyApp({super.key, required this.initialPage});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _notifSubscription?.cancel();
+    super.dispose();
+  }
+
+  /// Ketika app dibuka kembali dari background / restart
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      log("🔄 App resumed → cek ulang listener notifikasi");
+      _initNotificationListener();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -167,7 +201,7 @@ class MyApp extends StatelessWidget {
           elevation: 0,
         ),
       ),
-      home: DeepLinkWrapper(initialPage: initialPage),
+      home: DeepLinkWrapper(initialPage: widget.initialPage),
       routes: {
         '/main': (context) => const MainPage(),
         '/dashboard': (context) => const DashboardPembayaranPage(),
