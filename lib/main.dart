@@ -6,7 +6,6 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
-import 'package:myxcreate/store/detail.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:http/http.dart' as http;
@@ -26,6 +25,7 @@ import 'menu_fitur/koneksi_transfer_saldo.dart';
 import 'menu_fitur/riwayat_transfer.dart';
 import 'menu_fitur/pembayaran_service.dart';
 import 'menu_fitur/upload_produk.dart';
+import 'store/detail.dart';
 import 'store/store.dart';
 import 'xcode_edit/xcodeedit.dart';
 import 'web.dart';
@@ -70,6 +70,7 @@ Future<void> _persistNotifications() async {
         'title': e.title ?? '-',
         'content': e.content ?? '-',
         'time': DateTime.now().toIso8601String(),
+        'appIcon': e.appIcon != null ? base64Encode(e.appIcon!) : null,
       });
     }).toList();
     await prefs.setStringList('savedNotifications', store);
@@ -81,11 +82,30 @@ Future<void> _persistNotifications() async {
 Future<void> _restoreFromPrefs() async {
   try {
     final prefs = await SharedPreferences.getInstance();
+
+    // Restore logs
     final savedLogs = prefs.getStringList('notifLogs') ?? [];
     if (savedLogs.isNotEmpty) {
       notifLogs.clear();
       notifLogs.addAll(savedLogs);
       notifLogCounter.value++;
+    }
+
+    // Restore notifications
+    final savedNotifs = prefs.getStringList('savedNotifications') ?? [];
+    if (savedNotifs.isNotEmpty) {
+      globalNotifications.clear();
+      for (var item in savedNotifs) {
+        final map = jsonDecode(item);
+        final iconBytes = map['appIcon'] != null ? base64Decode(map['appIcon']) : null;
+        globalNotifications.add(ServiceNotificationEvent(
+          packageName: map['package'],
+          title: map['title'],
+          content: map['content'],
+          appIcon: iconBytes,
+        ));
+      }
+      globalNotifCounter.value++;
     }
   } catch (e) {
     log("⚠️ Gagal restore prefs: $e");
@@ -169,15 +189,15 @@ Future<void> _initNotificationListener() async {
         final String title = event.title ?? '-';
         final String content = event.content ?? '-';
 
-        // === 1. Simpan ke memory
+        // Simpan ke memory
         globalNotifications.insert(0, event);
         if (globalNotifications.length > 500) globalNotifications.removeLast();
         globalNotifCounter.value++;
 
-        // === 2. Persist ringkas
+        // Persist ringkas
         _persistNotifications();
 
-        // === 3. Auto POST ke URL
+        // Auto POST
         try {
           final prefs = await SharedPreferences.getInstance();
           final postUrl = prefs.getString('notifPostUrl') ?? '';
@@ -321,14 +341,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           elevation: 0,
         ),
       ),
-
-      // key part: wrap all routes so banner is always present
       builder: (context, child) {
         return Stack(
           children: [
-            // the normal app
             if (child != null) Positioned.fill(child: child),
-            // the top notification bar (global)
             const Positioned(
               top: 0,
               left: 0,
@@ -338,7 +354,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           ],
         );
       },
-
       home: DeepLinkWrapper(initialPage: widget.initialPage),
       routes: {
         '/main': (context) => const MainPage(),
@@ -359,8 +374,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 }
 
-/// Small top bar widget that listens to globalNotifCounter.
-/// Appears when a new notification arrives (shows latest).
+/// ====== Notification Top Bar ======
 class NotificationTopBar extends StatefulWidget {
   const NotificationTopBar({Key? key}) : super(key: key);
 
@@ -388,14 +402,11 @@ class _NotificationTopBarState extends State<NotificationTopBar> {
 
   void _onNotifCounterChanged() {
     final count = globalNotifCounter.value;
-    if (count == _lastSeenCount) return; // nothing new
+    if (count == _lastSeenCount) return;
     _lastSeenCount = count;
 
-    // show banner when a new notification exists
     if (globalNotifications.isNotEmpty) {
       setState(() => _visible = true);
-
-      // reset hide timer (auto hide after 6s)
       _hideTimer?.cancel();
       _hideTimer = Timer(const Duration(seconds: 6), () {
         if (mounted) setState(() => _visible = false);
@@ -409,7 +420,6 @@ class _NotificationTopBarState extends State<NotificationTopBar> {
   }
 
   void _openNotifPage() {
-    // navigate to user_notif page
     navigatorKey.currentState?.pushNamed('/user_notif');
     _dismiss();
   }
@@ -417,7 +427,6 @@ class _NotificationTopBarState extends State<NotificationTopBar> {
   @override
   Widget build(BuildContext context) {
     if (!_visible || globalNotifications.isEmpty) {
-      // render an empty sized box that occupies zero height so it doesn't shift layout
       return const SizedBox.shrink();
     }
 
@@ -428,7 +437,6 @@ class _NotificationTopBarState extends State<NotificationTopBar> {
         ? Image.memory(ev.appIcon!, width: 40, height: 40)
         : (ev.largeIcon != null ? Image.memory(ev.largeIcon!, width: 40, height: 40) : const Icon(Icons.notifications, size: 36));
 
-    // design: subtle elevated card aligned at top center with a small margin
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -528,7 +536,8 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
 
 class CustomSplashPage extends StatefulWidget {
   final Widget nextPage;
-  const CustomSplashPage({super.key, required this.nextPage});
+  const CustomSplashPage
+({super.key, required this.nextPage});
 
   @override
   State<CustomSplashPage> createState() => _CustomSplashPageState();
