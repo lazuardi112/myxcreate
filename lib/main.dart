@@ -19,7 +19,7 @@ import 'package:notification_listener_service/notification_listener_service.dart
 // pages
 import 'pages/user_notif.dart';
 
-// app pages (sesuaikan jika path berbeda)
+// app pages
 import 'auth/login.dart';
 import 'main_page.dart';
 import 'update_page.dart';
@@ -37,7 +37,7 @@ import 'xcode_edit/xcodeedit.dart';
 const String apiUrl = "https://api.xcreate.my.id/myxcreate/cek_update_apk.php";
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-/// Global stream controller: forward event plugin -> app
+/// Global stream controller
 final StreamController<ServiceNotificationEvent> notificationStreamController =
     StreamController<ServiceNotificationEvent>.broadcast();
 
@@ -46,10 +46,12 @@ Stream<ServiceNotificationEvent> get notificationStream =>
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  FlutterNativeSplash.preserve(widgetsBinding: WidgetsFlutterBinding.ensureInitialized());
+  FlutterNativeSplash.preserve(
+      widgetsBinding: WidgetsFlutterBinding.ensureInitialized());
 
   if (kIsWeb) {
-    runApp(const MaterialApp(home: WebPage(), debugShowCheckedModeBanner: false));
+    runApp(const MaterialApp(
+        home: WebPage(), debugShowCheckedModeBanner: false));
     return;
   }
 
@@ -60,50 +62,39 @@ Future<void> main() async {
     debugPrint('init error: $e\n$st');
   }
 
-  // sebelum runApp, kita bisa attach plugin stream agar event langsung ready
-  _attachPluginStream();
-
   runApp(MyApp(initialPage: initialPage));
   FlutterNativeSplash.remove();
 }
 
-/// forward plugin stream events ke global controller
-void _attachPluginStream() {
-  try {
-    NotificationListenerService.notificationsStream.listen((ServiceNotificationEvent? e) {
-      if (e == null) return;
-      try {
-        notificationStreamController.add(e);
-        log('Forward notification: pkg=${e.packageName} title=${e.title}');
-      } catch (ex) {
-        debugPrint('forward error: $ex');
-      }
-    }, onError: (err) {
-      debugPrint('plugin stream error: $err');
-    }, cancelOnError: false);
-  } catch (e) {
-    debugPrint('attach stream failed: $e');
-  }
-}
-
-/// cek login & versi update (sama seperti implementasi Anda sebelumnya)
+/// cek login & versi update
 Future<Widget> _checkLoginAndVersion() async {
   final prefs = await SharedPreferences.getInstance();
   final packageInfo = await PackageInfo.fromPlatform();
   final localVersion = packageInfo.version;
 
   try {
-    final uri = Uri.parse("$apiUrl?t=${DateTime.now().millisecondsSinceEpoch}");
+    final uri =
+        Uri.parse("$apiUrl?t=${DateTime.now().millisecondsSinceEpoch}");
     final response = await http.get(uri);
     if (response.statusCode == 200) {
-      final data = response.body.isEmpty ? {} : (jsonDecode(response.body) as Map);
+      final data =
+          response.body.isEmpty ? {} : (jsonDecode(response.body) as Map);
       final latestVersion = (data['versi'] ?? "").toString();
-      final changelog = (data['changelog'] ?? "Tidak ada catatan perubahan.").toString();
-      final tanggalUpdate = (data['tanggalUpdate'] ?? data['tanggal_update'] ?? "-").toString();
-      final downloadUrl = (data['url_apk'] ?? data['url_download'] ?? "").toString();
+      final changelog =
+          (data['changelog'] ?? "Tidak ada catatan perubahan.").toString();
+      final tanggalUpdate =
+          (data['tanggalUpdate'] ?? data['tanggal_update'] ?? "-").toString();
+      final downloadUrl =
+          (data['url_apk'] ?? data['url_download'] ?? "").toString();
 
-      if (latestVersion.isNotEmpty && downloadUrl.isNotEmpty && _isVersionLower(localVersion, latestVersion)) {
-        return UpdatePage(versi: latestVersion, changelog: changelog, tanggalUpdate: tanggalUpdate, urlDownload: downloadUrl);
+      if (latestVersion.isNotEmpty &&
+          downloadUrl.isNotEmpty &&
+          _isVersionLower(localVersion, latestVersion)) {
+        return UpdatePage(
+            versi: latestVersion,
+            changelog: changelog,
+            tanggalUpdate: tanggalUpdate,
+            urlDownload: downloadUrl);
       }
     }
   } catch (e) {
@@ -116,9 +107,12 @@ Future<Widget> _checkLoginAndVersion() async {
 }
 
 bool _isVersionLower(String current, String latest) {
-  final currParts = current.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-  final latestParts = latest.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-  final maxLength = currParts.length > latestParts.length ? currParts.length : latestParts.length;
+  final currParts =
+      current.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+  final latestParts =
+      latest.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+  final maxLength =
+      currParts.length > latestParts.length ? currParts.length : latestParts.length;
   while (currParts.length < maxLength) currParts.add(0);
   while (latestParts.length < maxLength) latestParts.add(0);
   for (var i = 0; i < maxLength; i++) {
@@ -137,20 +131,36 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  // optional: small preview overlay events
   final List<ServiceNotificationEvent> _preview = [];
   StreamSubscription<ServiceNotificationEvent>? _sub;
 
   @override
   void initState() {
     super.initState();
-    _sub = notificationStream.listen((event) {
+    _initNotifListener();
+  }
+
+  Future<void> _initNotifListener() async {
+    final granted = await NotificationListenerService.isPermissionGranted();
+    if (!granted) {
+      debugPrint("⚠️ Izin notifikasi belum diberikan");
+      return;
+    }
+
+    _sub = NotificationListenerService.notificationsStream.listen((event) {
+      if (!mounted) return;
+      notificationStreamController.add(event);
+
       setState(() {
         _preview.insert(0, event);
-        if (_preview.length > 5) _preview.removeRange(5, _preview.length);
+        if (_preview.length > 5) {
+          _preview.removeRange(5, _preview.length);
+        }
       });
+
+      log("📩 Notifikasi masuk: ${event.packageName} - ${event.title}");
     }, onError: (e) {
-      debugPrint('preview sub error: $e');
+      debugPrint('notif stream error: $e');
     });
   }
 
@@ -202,16 +212,23 @@ class _MyAppState extends State<MyApp> {
       elevation: 6,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       child: ListTile(
-        leading: e.appIcon == null ? null : Image.memory(e.appIcon!, width: 40, height: 40),
-        title: Text(e.title ?? 'No title', maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text(e.content ?? 'No content', maxLines: 1, overflow: TextOverflow.ellipsis),
-        trailing: IconButton(icon: const Icon(Icons.chevron_right), onPressed: () => navigatorKey.currentState?.pushNamed('/user_notif')),
+        leading: (e.appIcon != null)
+            ? Image.memory(e.appIcon!, width: 40, height: 40)
+            : const Icon(Icons.notifications),
+        title: Text(e.title ?? 'No title',
+            maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Text(e.content ?? 'No content',
+            maxLines: 1, overflow: TextOverflow.ellipsis),
+        trailing: IconButton(
+            icon: const Icon(Icons.chevron_right),
+            onPressed: () =>
+                navigatorKey.currentState?.pushNamed('/user_notif')),
       ),
     );
   }
 }
 
-/// DeepLinkWrapper & CustomSplashPage (gunakan implementasi Anda sendiri)
+/// DeepLinkWrapper (biarkan sama)
 class DeepLinkWrapper extends StatefulWidget {
   final Widget initialPage;
   const DeepLinkWrapper({Key? key, required this.initialPage}) : super(key: key);
@@ -229,7 +246,8 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
     super.initState();
     _appLinks = AppLinks();
     _initUri();
-    _appLinks.uriLinkStream.listen(_handleLink, onError: (e) => debugPrint('deep link error: $e'));
+    _appLinks.uriLinkStream
+        .listen(_handleLink, onError: (e) => debugPrint('deep link error: $e'));
   }
 
   Future<void> _initUri() async {
@@ -242,7 +260,9 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
       if (uri.host == "xcreate.my.id") {
         final idProduk = uri.queryParameters['idproduk'];
         if (idProduk != null) {
-          navigatorKey.currentState?.pushAndRemoveUntil(MaterialPageRoute(builder: (_) => DetailPage(idProduk: idProduk)), (_) => false);
+          navigatorKey.currentState?.pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => DetailPage(idProduk: idProduk)),
+              (_) => false);
         }
       }
     } catch (e) {
@@ -272,14 +292,27 @@ class _CustomSplashPageState extends State<CustomSplashPage> {
   @override
   void initState() {
     super.initState();
-    Timer(const Duration(seconds: 2), () => Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => widget.nextPage)));
+    Timer(const Duration(seconds: 2), () {
+      Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => widget.nextPage));
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.deepPurple,
-      body: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Image.asset('assets/x.png', width: 150, height: 150), const SizedBox(height: 20), const CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(Colors.white))])),
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Image.asset('assets/x.png', width: 150, height: 150),
+            const SizedBox(height: 20),
+            const CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white))
+          ],
+        ),
+      ),
     );
   }
 }
