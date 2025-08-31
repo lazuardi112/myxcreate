@@ -40,6 +40,18 @@ List<ServiceNotificationEvent> globalNotifications = [];
 
 StreamSubscription<ServiceNotificationEvent>? _notifSubscription;
 
+/// Global log untuk post notifikasi
+List<String> notifLogs = [];
+
+/// Fungsi helper untuk menambahkan log
+void addNotifLog(String message) {
+  final time = DateTime.now().toIso8601String();
+  notifLogs.insert(0, "[$time] $message");
+  if (notifLogs.length > 200) {
+    notifLogs.removeLast(); // biar tidak unlimited
+  }
+}
+
 Future<void> main() async {
   WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
 
@@ -72,7 +84,8 @@ Future<void> main() async {
 /// Inisialisasi notification listener
 Future<void> _initNotificationListener() async {
   try {
-    final hasPermission = await NotificationListenerService.isPermissionGranted();
+    final hasPermission =
+        await NotificationListenerService.isPermissionGranted();
     if (!hasPermission) {
       final granted = await NotificationListenerService.requestPermission();
       log("🔔 Permission diberikan? $granted");
@@ -83,9 +96,38 @@ Future<void> _initNotificationListener() async {
 
     // Start stream notification
     _notifSubscription =
-        NotificationListenerService.notificationsStream.listen((event) {
+        NotificationListenerService.notificationsStream.listen((event) async {
       log("📩 Notifikasi baru: ${event.title} - ${event.content}");
       globalNotifications.insert(0, event);
+
+      // Ambil prefs untuk cek app yang dipilih dan URL
+      final prefs = await SharedPreferences.getInstance();
+      final selectedApps = prefs.getStringList("selectedApps") ?? [];
+      final postUrl = prefs.getString("notifPostUrl");
+
+      if (postUrl != null &&
+          postUrl.isNotEmpty &&
+          selectedApps.contains(event.packageName)) {
+        try {
+          final response = await http.post(
+            Uri.parse(postUrl),
+            body: {
+              "app": event.packageName ?? "-",
+              "title": event.title ?? "-",
+              "text": event.content ?? "-",
+            },
+          );
+
+          if (response.statusCode == 200) {
+            addNotifLog("✅ Success → ${event.packageName} | ${event.title}");
+          } else {
+            addNotifLog(
+                "⚠️ Failed [${response.statusCode}] → ${event.packageName} | ${event.title}");
+          }
+        } catch (e) {
+          addNotifLog("❌ Error POST → ${event.packageName} | $e");
+        }
+      }
     });
   } catch (e) {
     log("❌ Error inisialisasi notification listener: $e");
