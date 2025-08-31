@@ -2,7 +2,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, Uint8List;
 import 'package:flutter/material.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'package:myxcreate/menu_fitur/midtrans/koneksi_midtrans.dart';
@@ -16,15 +16,13 @@ import 'package:app_links/app_links.dart';
 import 'package:notification_listener_service/notification_event.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
 
-// pages
-import 'pages/user_notif.dart';
-
-// app pages
+// app pages / services (sesuaikan path jika berbeda)
 import 'auth/login.dart';
 import 'main_page.dart';
 import 'update_page.dart';
 import 'store/detail.dart';
 import 'web.dart';
+import 'pages/user_notif.dart';
 import 'menu_fitur/dashboard_pembayaran.dart';
 import 'menu_fitur/riwayat_transfer.dart';
 import 'menu_fitur/pembayaran_service.dart';
@@ -37,68 +35,116 @@ import 'xcode_edit/xcodeedit.dart';
 const String apiUrl = "https://api.xcreate.my.id/myxcreate/cek_update_apk.php";
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-/// Global stream controller
+/// Global broadcast controller supaya halaman lain (user_notif.dart) bisa
+/// listen dan menampilkan event notifikasi secara real-time.
 final StreamController<ServiceNotificationEvent> notificationStreamController =
     StreamController<ServiceNotificationEvent>.broadcast();
 
+/// Untuk memudahkan akses: gunakan `notificationStreamController.stream`
 Stream<ServiceNotificationEvent> get notificationStream =>
     notificationStreamController.stream;
 
+class MainOverlayNotification {
+  final String? title;
+  final String? content;
+  final Uint8List? icon;
+  final String? packageName;
+  final DateTime receivedAt;
+
+  MainOverlayNotification({
+    this.title,
+    this.content,
+    this.icon,
+    this.packageName,
+    required this.receivedAt,
+  });
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  FlutterNativeSplash.preserve(
-      widgetsBinding: WidgetsFlutterBinding.ensureInitialized());
+
+  // preserve native splash until runApp is ready (optional)
+  FlutterNativeSplash.preserve(widgetsBinding: WidgetsFlutterBinding.ensureInitialized());
 
   if (kIsWeb) {
     runApp(const MaterialApp(
-        home: WebPage(), debugShowCheckedModeBanner: false));
+      debugShowCheckedModeBanner: false,
+      home: WebPage(),
+    ));
     return;
   }
 
   Widget initialPage = const LoginPage();
   try {
     initialPage = await _checkLoginAndVersion();
-  } catch (e, st) {
-    debugPrint('init error: $e\n$st');
+  } catch (e, stack) {
+    debugPrint('❌ Error inisialisasi: $e\n$stack');
   }
 
+  // Run app (MyApp hanya bertugas sebagai shell & meneruskan notifikasi ke stream)
   runApp(MyApp(initialPage: initialPage));
+
+  // remove native splash
   FlutterNativeSplash.remove();
+
+  // Mulai forward stream dari plugin -> notificationStreamController
+  // (tidak meminta permission di sini; user harus mengizinkan di user_notif.dart)
+  _attachPluginStream();
 }
 
-/// cek login & versi update
+/// Pasang listener plugin dan forward event ke notificationStreamController
+void _attachPluginStream() {
+  try {
+    // jangan paksa request permission di sini — hanya forward bila plugin mengirim event
+    NotificationListenerService.notificationsStream.listen(
+      (ServiceNotificationEvent? e) {
+        if (e == null) return;
+
+        // forward event ke controller agar UI bisa mendengarkan
+        try {
+          notificationStreamController.add(e);
+          log('Forwarded notification: pkg=${e.packageName} title=${e.title}');
+        } catch (ex) {
+          debugPrint('❌ Failed to forward notification: $ex');
+        }
+      },
+      onError: (err) {
+        debugPrint('Stream error (notification plugin): $err');
+      },
+      cancelOnError: false,
+    );
+  } catch (e) {
+    debugPrint('Failed to attach plugin stream: $e');
+  }
+}
+
+/// Cek login & versi update (sama seperti sebelumnya)
 Future<Widget> _checkLoginAndVersion() async {
   final prefs = await SharedPreferences.getInstance();
   final packageInfo = await PackageInfo.fromPlatform();
   final localVersion = packageInfo.version;
 
   try {
-    final uri =
-        Uri.parse("$apiUrl?t=${DateTime.now().millisecondsSinceEpoch}");
+    final uri = Uri.parse("$apiUrl?t=${DateTime.now().millisecondsSinceEpoch}");
     final response = await http.get(uri);
     if (response.statusCode == 200) {
-      final data =
-          response.body.isEmpty ? {} : (jsonDecode(response.body) as Map);
+      final data = jsonDecode(response.body);
       final latestVersion = (data['versi'] ?? "").toString();
-      final changelog =
-          (data['changelog'] ?? "Tidak ada catatan perubahan.").toString();
-      final tanggalUpdate =
-          (data['tanggalUpdate'] ?? data['tanggal_update'] ?? "-").toString();
-      final downloadUrl =
-          (data['url_apk'] ?? data['url_download'] ?? "").toString();
+      final changelog = (data['changelog'] ?? "Tidak ada catatan perubahan.").toString();
+      final tanggalUpdate = (data['tanggalUpdate'] ?? data['tanggal_update'] ?? "-").toString();
+      final downloadUrl = (data['url_apk'] ?? data['url_download'] ?? "").toString();
 
-      if (latestVersion.isNotEmpty &&
-          downloadUrl.isNotEmpty &&
-          _isVersionLower(localVersion, latestVersion)) {
+      if (latestVersion.isNotEmpty && downloadUrl.isNotEmpty && _isVersionLower(localVersion, latestVersion)) {
         return UpdatePage(
-            versi: latestVersion,
-            changelog: changelog,
-            tanggalUpdate: tanggalUpdate,
-            urlDownload: downloadUrl);
+          versi: latestVersion,
+          changelog: changelog,
+          tanggalUpdate: tanggalUpdate,
+          urlDownload: downloadUrl,
+        );
       }
     }
   } catch (e) {
-    debugPrint("Gagal cek versi: $e");
+    debugPrint("⚠️ Gagal cek versi: $e");
   }
 
   final username = prefs.getString('username');
@@ -107,14 +153,13 @@ Future<Widget> _checkLoginAndVersion() async {
 }
 
 bool _isVersionLower(String current, String latest) {
-  final currParts =
-      current.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-  final latestParts =
-      latest.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-  final maxLength =
-      currParts.length > latestParts.length ? currParts.length : latestParts.length;
+  final currParts = current.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+  final latestParts = latest.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+  final maxLength = currParts.length > latestParts.length ? currParts.length : latestParts.length;
+
   while (currParts.length < maxLength) currParts.add(0);
   while (latestParts.length < maxLength) latestParts.add(0);
+
   for (var i = 0; i < maxLength; i++) {
     if (currParts[i] < latestParts[i]) return true;
     if (currParts[i] > latestParts[i]) return false;
@@ -122,51 +167,40 @@ bool _isVersionLower(String current, String latest) {
   return false;
 }
 
+/// MyApp: tetap integrasikan routing / splash seperti project Anda,
+/// tapi *tidak* melakukan permission request di sini.
 class MyApp extends StatefulWidget {
   final Widget initialPage;
-  const MyApp({Key? key, required this.initialPage}) : super(key: key);
+  const MyApp({super.key, required this.initialPage});
 
   @override
   State<MyApp> createState() => _MyAppState();
 }
 
 class _MyAppState extends State<MyApp> {
-  final List<ServiceNotificationEvent> _preview = [];
-  StreamSubscription<ServiceNotificationEvent>? _sub;
+  // overlay kecil untuk preview notifikasi (opsional)
+  final List<ServiceNotificationEvent> _previewEvents = [];
+
+  StreamSubscription<ServiceNotificationEvent>? _previewSub;
 
   @override
   void initState() {
     super.initState();
-    _initNotifListener();
-  }
 
-  Future<void> _initNotifListener() async {
-    final granted = await NotificationListenerService.isPermissionGranted();
-    if (!granted) {
-      debugPrint("⚠️ Izin notifikasi belum diberikan");
-      return;
-    }
-
-    _sub = NotificationListenerService.notificationsStream.listen((event) {
-      if (!mounted) return;
-      notificationStreamController.add(event);
-
+    // subscribe ke global notificationStream untuk preview overlay di app
+    _previewSub = notificationStream.listen((event) {
       setState(() {
-        _preview.insert(0, event);
-        if (_preview.length > 5) {
-          _preview.removeRange(5, _preview.length);
-        }
+        _previewEvents.insert(0, event);
+        if (_previewEvents.length > 5) _previewEvents.removeRange(5, _previewEvents.length);
       });
-
-      log("📩 Notifikasi masuk: ${event.packageName} - ${event.title}");
     }, onError: (e) {
-      debugPrint('notif stream error: $e');
+      debugPrint('preview stream error: $e');
     });
   }
 
   @override
   void dispose() {
-    _sub?.cancel();
+    _previewSub?.cancel();
     super.dispose();
   }
 
@@ -176,22 +210,29 @@ class _MyAppState extends State<MyApp> {
       navigatorKey: navigatorKey,
       title: 'MyXCreate',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(primarySwatch: Colors.deepPurple),
+      theme: ThemeData(
+        primarySwatch: Colors.deepPurple,
+        scaffoldBackgroundColor: Colors.white,
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Colors.deepPurple,
+          foregroundColor: Colors.white,
+        ),
+      ),
       home: Stack(
         children: [
           DeepLinkWrapper(initialPage: widget.initialPage),
-          if (_preview.isNotEmpty)
+          // preview overlay sederhana: klik untuk buka halaman user_notif
+          if (_previewEvents.isNotEmpty)
             Positioned(
               bottom: 12,
               left: 12,
               right: 12,
-              child: _buildPreviewCard(_preview.first),
+              child: _buildPreviewCard(),
             ),
         ],
       ),
       routes: {
         '/main': (_) => const MainPage(),
-        '/user_notif': (_) => const UserNotifPage(),
         '/dashboard': (_) => const DashboardPembayaranPage(),
         '/riwayat_transfer': (_) => const RiwayatTransferPage(),
         '/login': (_) => const LoginPage(),
@@ -203,35 +244,35 @@ class _MyAppState extends State<MyApp> {
         '/xcedit': (_) => XcodeEditPage(),
         '/riwayat_midtrans': (_) => RiwayatMidtransPage(),
         '/koneksi_midtrans': (_) => KoneksiMidtransPage(),
+        '/user_notif': (_) => const UserNotifPage(),
       },
     );
   }
 
-  Widget _buildPreviewCard(ServiceNotificationEvent e) {
+  Widget _buildPreviewCard() {
+    final e = _previewEvents.first;
     return Card(
       elevation: 6,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       child: ListTile(
-        leading: (e.appIcon != null)
-            ? Image.memory(e.appIcon!, width: 40, height: 40)
-            : const Icon(Icons.notifications),
-        title: Text(e.title ?? 'No title',
-            maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text(e.content ?? 'No content',
-            maxLines: 1, overflow: TextOverflow.ellipsis),
+        leading: e.appIcon == null ? null : Image.memory(e.appIcon!, width: 40, height: 40),
+        title: Text(e.title ?? 'No title', maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Text(e.content ?? 'No content', maxLines: 1, overflow: TextOverflow.ellipsis),
         trailing: IconButton(
-            icon: const Icon(Icons.chevron_right),
-            onPressed: () =>
-                navigatorKey.currentState?.pushNamed('/user_notif')),
+          icon: const Icon(Icons.chevron_right),
+          onPressed: () {
+            navigatorKey.currentState?.pushNamed('/user_notif');
+          },
+        ),
       ),
     );
   }
 }
 
-/// DeepLinkWrapper (biarkan sama)
+/// DeepLinkWrapper & CustomSplashPage (sama seperti implementasi Anda)
 class DeepLinkWrapper extends StatefulWidget {
   final Widget initialPage;
-  const DeepLinkWrapper({Key? key, required this.initialPage}) : super(key: key);
+  const DeepLinkWrapper({super.key, required this.initialPage});
 
   @override
   State<DeepLinkWrapper> createState() => _DeepLinkWrapperState();
@@ -246,8 +287,7 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
     super.initState();
     _appLinks = AppLinks();
     _initUri();
-    _appLinks.uriLinkStream
-        .listen(_handleLink, onError: (e) => debugPrint('deep link error: $e'));
+    _appLinks.uriLinkStream.listen(_handleLink, onError: (e) => debugPrint('deep link error: $e'));
   }
 
   Future<void> _initUri() async {
@@ -261,8 +301,9 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
         final idProduk = uri.queryParameters['idproduk'];
         if (idProduk != null) {
           navigatorKey.currentState?.pushAndRemoveUntil(
-              MaterialPageRoute(builder: (_) => DetailPage(idProduk: idProduk)),
-              (_) => false);
+            MaterialPageRoute(builder: (_) => DetailPage(idProduk: idProduk)),
+            (_) => false,
+          );
         }
       }
     } catch (e) {
@@ -282,7 +323,7 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
 
 class CustomSplashPage extends StatefulWidget {
   final Widget nextPage;
-  const CustomSplashPage({Key? key, required this.nextPage}) : super(key: key);
+  const CustomSplashPage({super.key, required this.nextPage});
 
   @override
   State<CustomSplashPage> createState() => _CustomSplashPageState();
@@ -293,8 +334,7 @@ class _CustomSplashPageState extends State<CustomSplashPage> {
   void initState() {
     super.initState();
     Timer(const Duration(seconds: 2), () {
-      Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => widget.nextPage));
+      Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => widget.nextPage));
     });
   }
 
@@ -308,8 +348,7 @@ class _CustomSplashPageState extends State<CustomSplashPage> {
           children: [
             Image.asset('assets/x.png', width: 150, height: 150),
             const SizedBox(height: 20),
-            const CircularProgressIndicator(
-                valueColor: AlwaysStoppedAnimation<Color>(Colors.white))
+            const CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(Colors.white)),
           ],
         ),
       ),
