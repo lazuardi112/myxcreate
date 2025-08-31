@@ -37,24 +37,19 @@ class _UserNotifPageState extends State<UserNotifPage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
-  // aplikasi terinstal
   List<AppInfo> _apps = [];
   bool _loadingApps = true;
   Set<String> _selectedApps = {};
 
-  // url & setting
   final TextEditingController _urlController = TextEditingController();
   String _savedUrl = '';
 
-  // notifikasi untuk display
   final List<DisplayNotif> _displayNotifs = [];
 
-  // filter
   String _search = '';
   String _filterPackage = 'All';
-
-  // auto post
   bool _autoPostFromPage = false;
+
   StreamSubscription<ServiceNotificationEvent?>? _localSub;
 
   @override
@@ -64,10 +59,9 @@ class _UserNotifPageState extends State<UserNotifPage>
 
     _loadPrefs();
     _loadSelectedApps();
-    _tryLoadApps();
+    _loadInstalledApps();
 
     _rebuildFromGlobal();
-
     globalNotifCounter.addListener(_onGlobalNotifChanged);
     notifLogCounter.addListener(_onLogsChanged);
   }
@@ -83,7 +77,7 @@ class _UserNotifPageState extends State<UserNotifPage>
   }
 
   void _onGlobalNotifChanged() {
-    if (mounted) _rebuildFromGlobal();
+    _rebuildFromGlobal();
   }
 
   void _onLogsChanged() {
@@ -111,18 +105,17 @@ class _UserNotifPageState extends State<UserNotifPage>
     await prefs.setBool('autoPostFromPage', _autoPostFromPage);
   }
 
-  Future<void> _tryLoadApps() async {
+  Future<void> _loadInstalledApps() async {
     setState(() => _loadingApps = true);
     try {
       final apps = await InstalledApps.getInstalledApps(true, true);
-      if (!mounted) return;
-      apps.sort((a, b) => (a.name).toLowerCase().compareTo((b.name).toLowerCase()));
+      apps.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
       setState(() => _apps = apps);
     } catch (e) {
       addNotifLog("⚠️ Gagal load installed apps: $e");
       setState(() => _apps = []);
     } finally {
-      if (mounted) setState(() => _loadingApps = false);
+      setState(() => _loadingApps = false);
     }
   }
 
@@ -151,7 +144,9 @@ class _UserNotifPageState extends State<UserNotifPage>
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('notifPostUrl', _urlController.text.trim());
       setState(() => _savedUrl = _urlController.text.trim());
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✅ URL berhasil disimpan')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('✅ URL berhasil disimpan'))
+      );
       addNotifLog("💾 URL saved: ${_urlController.text.trim()}");
     } catch (e) {
       addNotifLog("❌ Gagal simpan URL: $e");
@@ -160,33 +155,32 @@ class _UserNotifPageState extends State<UserNotifPage>
 
   Future<void> _requestPermissionFromUI() async {
     final granted = await checkAndRequestNotifPermission();
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(granted ? "✅ Izin notifikasi aktif" : "⚠️ Izin tidak diberikan"),
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(granted ? "✅ Izin notifikasi aktif" : "⚠️ Izin tidak diberikan")),
+    );
   }
 
   Future<void> _ensureLocalSubscription() async {
     try {
       final has = await NotificationListenerService.isPermissionGranted();
-      if (!has) {
-        addNotifLog("🔕 Local sub: permission not granted");
-        return;
-      }
+      if (!has) return;
+
       if (_localSub != null) return;
+
       _localSub = NotificationListenerService.notificationsStream.listen((event) async {
         _displayNotifs.insert(0, DisplayNotif(event, DateTime.now()));
         if (_displayNotifs.length > 500) _displayNotifs.removeLast();
         setState(() {});
+
         if (_autoPostFromPage) {
           final prefs = await SharedPreferences.getInstance();
           final selected = prefs.getStringList('selectedApps') ?? [];
           final postUrl = prefs.getString('notifPostUrl') ?? '';
           final pkg = event.packageName ?? '';
-          if (postUrl.isNotEmpty && selected.contains(pkg)) {
-            _postEvent(event, postUrl);
-          }
+          if (postUrl.isNotEmpty && selected.contains(pkg)) _postEvent(event, postUrl);
         }
       });
+
       addNotifLog("✅ Local subscription started");
     } catch (e) {
       addNotifLog("❌ _ensureLocalSubscription: $e");
@@ -239,6 +233,13 @@ class _UserNotifPageState extends State<UserNotifPage>
     return list;
   }
 
+  Future<void> _clearLogs() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('notifLogs');
+    notifLogs.clear();
+    notifLogCounter.value++;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -289,7 +290,7 @@ class _UserNotifPageState extends State<UserNotifPage>
         Wrap(
           spacing: 8,
           children: [
-            ElevatedButton(onPressed: () => _testPostDummy(), child: const Text("Test POST")),
+            ElevatedButton(onPressed: _testPostDummy, child: const Text("Test POST")),
             ElevatedButton(
               onPressed: () async {
                 setState(() => _autoPostFromPage = !_autoPostFromPage);
@@ -306,7 +307,9 @@ class _UserNotifPageState extends State<UserNotifPage>
             ElevatedButton(
               onPressed: () async {
                 await restartListenerSafely();
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("🔄 Listener restart diminta")));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("🔄 Listener restart diminta"))
+                );
               },
               child: const Text("Aktifkan Listener"),
             ),
@@ -379,15 +382,29 @@ class _UserNotifPageState extends State<UserNotifPage>
     if (notifLogs.isEmpty) {
       return const Center(child: Text("Belum ada log"));
     }
-    return ListView.builder(
-      padding: const EdgeInsets.all(8),
-      itemCount: notifLogs.length,
-      itemBuilder: (context, idx) => Card(
-        child: ListTile(
-          leading: const Icon(Icons.bug_report, color: Colors.deepPurple),
-          title: Text(notifLogs[idx]),
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(8),
+          child: ElevatedButton.icon(
+            icon: const Icon(Icons.delete),
+            label: const Text("Hapus Semua Log"),
+            onPressed: _clearLogs,
+          ),
         ),
-      ),
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.all(8),
+            itemCount: notifLogs.length,
+            itemBuilder: (context, idx) => Card(
+              child: ListTile(
+                leading: const Icon(Icons.bug_report, color: Colors.deepPurple),
+                title: Text(notifLogs[idx]),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
