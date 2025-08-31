@@ -18,6 +18,8 @@ class NotifService {
   static const String _keyCaptured = 'captured_notifs';
   static const String _keyWebhook = 'notif_webhook_url';
 
+  static var stream;
+
   /// Inisialisasi dan start service (panggil dari main / UI)
   static Future<void> ensureStarted() async {
     if (kIsWeb) return;
@@ -192,6 +194,8 @@ class NotifService {
   static Future<void> startForegroundService() async {}
 
   static Future<void> stopForegroundService() async {}
+
+  static Future<void> addCaptured(Map<String, String?> map) async {}
 }
 
 /// Foreground Task handler

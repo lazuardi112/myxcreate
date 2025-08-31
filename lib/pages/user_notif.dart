@@ -37,12 +37,24 @@ class _UserNotifPageState extends State<UserNotifPage>
     _searchCtrl.addListener(_applySearch);
     _initAll();
 
-    // Subscribe ke notifikasi
+    // Subscribe ke notifikasi dan langsung tampil di app
     _notifSub = NotificationListenerService.notificationsStream.listen((event) async {
       if (event.packageName == null) return;
       final prefsSelected = await NotifService.getSelectedPackages();
       if (prefsSelected.contains(event.packageName)) {
+        // Simpan ke captured local
+        await NotifService.addCaptured({
+          "package": event.packageName,
+          "appName": event.appName ?? event.packageName,
+          "title": event.title ?? "",
+          "content": event.content ?? "",
+          "timestamp": DateTime.now().toIso8601String(),
+        });
+
+        // Refresh tampilan
         await _refreshCaptured();
+
+        // Kirim ke webhook jika ada
         await _sendToWebhook(event);
       }
     });
@@ -145,8 +157,8 @@ class _UserNotifPageState extends State<UserNotifPage>
         ? event.appName!
         : (event.packageName ?? 'unknown');
 
-    final title = (event.title ?? event.text ?? event.content ?? '').toString();
-    final text = (event.content ?? event.text ?? event.title ?? '').toString();
+    final title = (event.title ?? '').toString();
+    final text = (event.content ?? '').toString();
 
     final data = {
       "app": appName,
@@ -384,8 +396,8 @@ class _UserNotifPageState extends State<UserNotifPage>
   }
 }
 
-extension on ServiceNotificationEvent {
-  get appName => null;
-  
-  get text => null;
+// --- Extension agar ServiceNotificationEvent punya appName & text ---
+extension ServiceNotifExt on ServiceNotificationEvent {
+  String? get appName => this.packageName;
+  String? get text => this.content ?? this.title;
 }
