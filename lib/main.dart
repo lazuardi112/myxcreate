@@ -13,7 +13,7 @@ import 'package:app_links/app_links.dart';
 import 'package:notification_listener_service/notification_event.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
 
-// Halaman-halaman
+// Halaman-halaman (pastikan file ada di project)
 import 'auth/login.dart';
 import 'main_page.dart';
 import 'menu_fitur/midtrans/koneksi_midtrans.dart';
@@ -36,71 +36,75 @@ const String apiUrl = "https://api.xcreate.my.id/myxcreate/cek_update_apk.php";
 /// Global navigator key
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-/// Global notifikasi (in-memory)
+/// In-memory list of raw event objects from plugin
 final List<ServiceNotificationEvent> globalNotifications = [];
 
-/// Notifier agar UI bisa rebuild
+/// ValueNotifier supaya UI bisa rebuild
 final ValueNotifier<int> globalNotifCounter = ValueNotifier<int>(0);
 
-StreamSubscription<ServiceNotificationEvent>? _notifSubscription;
+StreamSubscription<ServiceNotificationEvent?>? _notifSubscription;
 
-/// Global log
+/// Global log (persisted)
 final List<String> notifLogs = [];
-
-/// Notifier logs
 final ValueNotifier<int> notifLogCounter = ValueNotifier<int>(0);
 
-/// Tambah log helper
+/// Batasan untuk list agar tidak memakan memori
+const int maxStoredNotifs = 500;
+const int maxStoredLogs = 1000;
+
+/// Helper: add log (persist)
 Future<void> addNotifLog(String message) async {
   final time = DateTime.now().toIso8601String();
   final entry = "[$time] $message";
   notifLogs.insert(0, entry);
-  if (notifLogs.length > 500) notifLogs.removeLast();
+  if (notifLogs.length > maxStoredLogs) notifLogs.removeLast();
   notifLogCounter.value++;
   try {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('notifLogs', notifLogs);
   } catch (e) {
-    log("⚠️ Gagal menyimpan notifLogs: $e");
+    log("⚠️ Failed to persist logs: $e");
   }
 }
 
-/// Persist minimal summary
-Future<void> _persistNotifications() async {
+/// Persist minimal notifications summary
+Future<void> _persistNotificationsSummary() async {
   try {
     final prefs = await SharedPreferences.getInstance();
-    final store = globalNotifications
+    final list = globalNotifications
         .take(200)
         .map((e) => jsonEncode({
               'package': e.packageName ?? '-',
               'title': e.title ?? '-',
               'content': e.content ?? '-',
-              'time': DateTime.now().toIso8601String(),
+              'timestamp': DateTime.now().toIso8601String(),
             }))
         .toList();
-    await prefs.setStringList('savedNotifications', store);
+    await prefs.setStringList('notifSummary', list);
   } catch (e) {
-    log("⚠️ Gagal persist notif: $e");
+    log("⚠️ Failed persist notification summary: $e");
   }
 }
 
-/// Restore persisted
-Future<void> _restoreNotificationsFromPrefs() async {
+/// Restore persisted logs & summaries
+Future<void> _restorePersisted() async {
   try {
     final prefs = await SharedPreferences.getInstance();
-    final stored = prefs.getStringList('savedNotifications') ?? [];
-    for (final s in stored.reversed) {
-      addNotifLog("↺ restored notification: $s");
-    }
-
     final savedLogs = prefs.getStringList('notifLogs') ?? [];
     if (savedLogs.isNotEmpty) {
       notifLogs.clear();
       notifLogs.addAll(savedLogs);
       notifLogCounter.value++;
     }
+    final savedSummary = prefs.getStringList('notifSummary') ?? [];
+    if (savedSummary.isNotEmpty) {
+      for (final s in savedSummary.reversed) {
+        // restore as log entries so user sees them; we cannot fully reconstruct ServiceNotificationEvent
+        addNotifLog("↺ restored: $s");
+      }
+    }
   } catch (e) {
-    log("⚠️ Gagal restore persisted data: $e");
+    log("⚠️ Failed to restore persisted: $e");
   }
 }
 
@@ -115,18 +119,20 @@ Future<void> main() async {
     return;
   }
 
+  // preserve splash while initialising
   FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
 
-  await _restoreNotificationsFromPrefs();
+  // restore persisted small state
+  await _restorePersisted();
 
-  // Jangan paksa start listener kalau izin belum ada
+  // try init listener safely (will only start if permission granted)
   await _safeInitNotificationListener();
 
   Widget initialPage = const LoginPage();
   try {
     initialPage = await _checkLoginAndVersion();
-  } catch (e, stack) {
-    debugPrint('❌ Error init: $e\n$stack');
+  } catch (e, st) {
+    debugPrint('❌ Error saat inisialisasi: $e\n$st');
   }
 
   runApp(MyApp(initialPage: initialPage));
@@ -134,7 +140,7 @@ Future<void> main() async {
   FlutterNativeSplash.remove();
 }
 
-/// Safe wrapper
+/// Safe wrapper for init
 Future<void> _safeInitNotificationListener() async {
   try {
     await _initNotificationListener();
@@ -144,97 +150,136 @@ Future<void> _safeInitNotificationListener() async {
   }
 }
 
-/// UI call → request permission
+/// Fungsi yang UI panggil untuk check & request permission.
+/// Mengembalikan `true` jika permission sudah granted (sekarang).
 Future<bool> checkAndRequestNotifPermission() async {
   try {
-    final has = await NotificationListenerService.isPermissionGranted();
-    if (has) return true;
+    final bool grantedNow = await NotificationListenerService.isPermissionGranted();
+    if (grantedNow) return true;
 
-    final granted = await NotificationListenerService.requestPermission();
-    // ⚠️ Jangan langsung restart listener → tunggu saat resume
-    return granted;
+    // requestPermission will open settings (OS) and return true when user enables it.
+    final bool result = await NotificationListenerService.requestPermission();
+    // Don't immediately assume listener is usable — app may be paused/resumed by OS.
+    // We return result; caller should resume or call activateListener after app resumes.
+    return result;
   } catch (e) {
     log("❌ checkAndRequestNotifPermission error: $e");
     return false;
   }
 }
 
-/// Restart listener safely
-Future<void> _restartListenerSafely() async {
+/// Activate / restart listener safely (can be called from UI).
+Future<void> activateListenerNow() async {
   try {
     await _notifSubscription?.cancel();
-    await _initNotificationListener();
   } catch (e) {
-    log("❌ restart listener error: $e");
-    await addNotifLog("❌ restart listener: $e");
+    log("⚠️ cancel previous subscription failed: $e");
   }
+  await _initNotificationListener();
 }
 
-/// Init notification listener
+/// Internal: initialize listener only if permission granted.
+/// Wrapped defensively.
 Future<void> _initNotificationListener() async {
   try {
-    final hasPermission = await NotificationListenerService.isPermissionGranted();
-    if (!hasPermission) {
-      log("🔕 Listener permission belum diberikan.");
+    final bool granted = await NotificationListenerService.isPermissionGranted();
+    if (!granted) {
+      log("🔕 notification permission not granted; listener will not start.");
       return;
     }
 
-    await _notifSubscription?.cancel();
+    // cancel previous subscription if any
+    try {
+      await _notifSubscription?.cancel();
+    } catch (e) {
+      log("⚠️ cancel existing subscription error: $e");
+    }
 
+    // subscribe
     _notifSubscription = NotificationListenerService.notificationsStream.listen(
       (ServiceNotificationEvent? event) async {
         if (event == null) return;
         try {
-          final pkg = event.packageName ?? '-';
-          final title = event.title ?? '-';
-          final content = event.content ?? '-';
+          // Extract fields according to plugin docs
+          final int? id = event.id;
+          final bool? canReply = event.canReply;
+          final bool? haveExtraPicture = event.haveExtraPicture;
+          final bool? hasRemoved = event.hasRemoved;
+          final Uint8List? extrasPicture = event.extrasPicture;
+          final Uint8List? largeIcon = event.largeIcon;
+          final String? packageName = event.packageName;
+          final String? title = event.title;
+          final Uint8List? appIcon = event.appIcon;
+          final String? content = event.content;
 
+          log("📩 notification event from $packageName : $title / ${content?.substring(0, content!.length > 40 ? 40 : content.length)}");
+
+          // Save raw event (in-memory limited)
           globalNotifications.insert(0, event);
-          if (globalNotifications.length > 500) globalNotifications.removeLast();
+          if (globalNotifications.length > maxStoredNotifs) {
+            globalNotifications.removeLast();
+          }
           globalNotifCounter.value++;
 
-          _persistNotifications();
+          // Persist light summary
+          _persistNotificationsSummary();
 
+          // If configured, post to user URL for selected apps
           try {
             final prefs = await SharedPreferences.getInstance();
             final selectedApps = prefs.getStringList('selectedApps') ?? [];
             final postUrl = prefs.getString('notifPostUrl') ?? '';
 
-            if (postUrl.isNotEmpty && selectedApps.contains(pkg)) {
+            if (postUrl.isNotEmpty && packageName != null && selectedApps.contains(packageName)) {
               final response = await http.post(Uri.parse(postUrl), body: {
-                'app': pkg,
-                'title': title,
-                'text': content,
+                'app': packageName,
+                'title': title ?? '',
+                'text': content ?? '',
+                'id': id?.toString() ?? '',
               }).timeout(const Duration(seconds: 10));
 
               if (response.statusCode >= 200 && response.statusCode < 300) {
-                await addNotifLog("✅ Sent → $pkg | $title");
+                await addNotifLog("✅ Sent → $packageName | ${title ?? '(no title)'}");
               } else {
-                await addNotifLog("⚠️ HTTP ${response.statusCode} → $pkg | $title");
+                await addNotifLog("⚠️ HTTP ${response.statusCode} → $packageName | ${title ?? '(no title)'}");
               }
             }
           } catch (e) {
-            await addNotifLog("❌ POST error → ${event.packageName} | $e");
+            await addNotifLog("❌ Post error: $e");
           }
-        } catch (e) {
-          log("❌ handle notif error: $e");
+
+          // Example: auto-reply (only if canReply true)
+          // NOTE: many apps will not allow auto-reply; use carefully.
+          // if (canReply == true) {
+          //   try {
+          //     final ok = await event.sendReply("Auto reply from MyXCreate");
+          //     await addNotifLog("↩️ Auto-reply sent: $ok");
+          //   } catch (e) {
+          //     await addNotifLog("❌ sendReply failed: $e");
+          //   }
+          // }
+        } catch (e, st) {
+          log("❌ Error processing notification event: $e\n$st");
+          await addNotifLog("❌ Error processing event: $e");
         }
       },
-      onError: (err) async {
-        log("❌ notificationsStream error: $err");
+      onError: (err, stack) async {
+        log("❌ notificationsStream error: $err\n$stack");
         await addNotifLog("❌ Stream error: $err");
+        // don't rethrow; we try to recover later (e.g., on resume)
       },
       cancelOnError: false,
     );
-    log("✅ Notification listener started");
+
+    log("✅ Notification listener started (stream subscribed).");
     await addNotifLog("✅ Listener started");
-  } catch (e) {
-    log("❌ _initNotificationListener failed: $e");
+  } catch (e, st) {
+    log("❌ _initNotificationListener failed: $e\n$st");
     await addNotifLog("❌ init listener failed: $e");
   }
 }
 
-/// Cek login & versi
+/// Check app version & login like before
 Future<Widget> _checkLoginAndVersion() async {
   final prefs = await SharedPreferences.getInstance();
   final packageInfo = await PackageInfo.fromPlatform();
@@ -295,7 +340,7 @@ bool _isVersionLower(String current, String latest) {
   return false;
 }
 
-/// MyApp
+/// MyApp (adds lifecycle observer to try restart listener on resume)
 class MyApp extends StatefulWidget {
   final Widget initialPage;
   const MyApp({super.key, required this.initialPage});
@@ -320,9 +365,13 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // When app resumes, attempt a safe init. We do not block UI.
     if (state == AppLifecycleState.resumed) {
-      log("🔄 App resumed → try restart listener");
-      _safeInitNotificationListener(); // aman, tidak crash
+      log("🔄 App resumed - attempting to ensure listener running if permission granted");
+      // Slight delay to allow OS settle if user just enabled permission
+      Future.delayed(const Duration(milliseconds: 400), () {
+        _safeInitNotificationListener();
+      });
     }
   }
 
@@ -362,7 +411,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 }
 
-/// DeepLinkWrapper
+/// DeepLinkWrapper (unchanged)
 class DeepLinkWrapper extends StatefulWidget {
   final Widget initialPage;
   const DeepLinkWrapper({super.key, required this.initialPage});
@@ -380,6 +429,7 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
     super.initState();
     _appLinks = AppLinks();
     _initUri();
+
     _appLinks.uriLinkStream.listen((uri) {
       _handleLink(uri);
     });
@@ -424,7 +474,7 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
   }
 }
 
-/// Custom splash
+/// Custom splash page (unchanged)
 class CustomSplashPage extends StatefulWidget {
   final Widget nextPage;
   const CustomSplashPage({super.key, required this.nextPage});
