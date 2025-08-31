@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:installed_apps/installed_apps.dart';
 import 'package:installed_apps/app_info.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:myxcreate/main.dart'; // supaya bisa akses globalNotifications & notifLogs
+import 'package:myxcreate/main.dart'; // akses globalNotifications & notifLogs
 
 class UserNotifPage extends StatefulWidget {
   const UserNotifPage({super.key});
@@ -165,7 +165,7 @@ class _UserNotifPageState extends State<UserNotifPage>
                               _saveSelectedApps();
                             });
                           },
-                          title: Text(app.name ?? "Tanpa Nama"),
+                          title: Text(app.name),
                           subtitle: Text(app.packageName ?? "-"),
                           secondary: app.icon != null
                               ? Image.memory(app.icon as Uint8List,

@@ -78,15 +78,31 @@ Future<void> main() async {
   FlutterNativeSplash.remove();
 }
 
-/// Init notification listener
-Future<void> _initNotificationListener() async {
+/// Fungsi untuk cek & request izin notifikasi
+Future<bool> checkAndRequestNotifPermission() async {
   try {
     final hasPermission =
         await NotificationListenerService.isPermissionGranted();
     if (!hasPermission) {
       final granted = await NotificationListenerService.requestPermission();
       log("🔔 Permission diberikan? $granted");
-      if (!granted) return; // stop kalau user tidak izinkan
+      return granted;
+    }
+    return true;
+  } catch (e) {
+    log("❌ Error check permission: $e");
+    return false;
+  }
+}
+
+/// Init notification listener
+Future<void> _initNotificationListener() async {
+  try {
+    final hasPermission =
+        await NotificationListenerService.isPermissionGranted();
+    if (!hasPermission) {
+      log("⚠️ Notification permission belum diberikan, listener tidak jalan");
+      return;
     }
 
     await _notifSubscription?.cancel();
