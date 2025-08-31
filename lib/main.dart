@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
@@ -268,7 +269,7 @@ bool _isVersionLower(String current, String latest) {
   return false;
 }
 
-/// ====== MyApp ======
+/// ====== MyApp with top notification bar ======
 class MyApp extends StatefulWidget {
   final Widget initialPage;
   const MyApp({super.key, required this.initialPage});
@@ -320,6 +321,24 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           elevation: 0,
         ),
       ),
+
+      // key part: wrap all routes so banner is always present
+      builder: (context, child) {
+        return Stack(
+          children: [
+            // the normal app
+            if (child != null) Positioned.fill(child: child),
+            // the top notification bar (global)
+            const Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: NotificationTopBar(),
+            ),
+          ],
+        );
+      },
+
       home: DeepLinkWrapper(initialPage: widget.initialPage),
       routes: {
         '/main': (context) => const MainPage(),
@@ -336,6 +355,119 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         '/koneksi_midtrans': (context) => KoneksiMidtransPage(),
         '/user_notif': (context) => const UserNotifPage(),
       },
+    );
+  }
+}
+
+/// Small top bar widget that listens to globalNotifCounter.
+/// Appears when a new notification arrives (shows latest).
+class NotificationTopBar extends StatefulWidget {
+  const NotificationTopBar({Key? key}) : super(key: key);
+
+  @override
+  State<NotificationTopBar> createState() => _NotificationTopBarState();
+}
+
+class _NotificationTopBarState extends State<NotificationTopBar> {
+  bool _visible = false;
+  Timer? _hideTimer;
+  int _lastSeenCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    globalNotifCounter.addListener(_onNotifCounterChanged);
+  }
+
+  @override
+  void dispose() {
+    globalNotifCounter.removeListener(_onNotifCounterChanged);
+    _hideTimer?.cancel();
+    super.dispose();
+  }
+
+  void _onNotifCounterChanged() {
+    final count = globalNotifCounter.value;
+    if (count == _lastSeenCount) return; // nothing new
+    _lastSeenCount = count;
+
+    // show banner when a new notification exists
+    if (globalNotifications.isNotEmpty) {
+      setState(() => _visible = true);
+
+      // reset hide timer (auto hide after 6s)
+      _hideTimer?.cancel();
+      _hideTimer = Timer(const Duration(seconds: 6), () {
+        if (mounted) setState(() => _visible = false);
+      });
+    }
+  }
+
+  void _dismiss() {
+    _hideTimer?.cancel();
+    setState(() => _visible = false);
+  }
+
+  void _openNotifPage() {
+    // navigate to user_notif page
+    navigatorKey.currentState?.pushNamed('/user_notif');
+    _dismiss();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_visible || globalNotifications.isEmpty) {
+      // render an empty sized box that occupies zero height so it doesn't shift layout
+      return const SizedBox.shrink();
+    }
+
+    final ev = globalNotifications.first;
+    final title = ev.title ?? '(Tanpa Judul)';
+    final pkg = ev.packageName ?? '-';
+    final iconWidget = ev.appIcon != null
+        ? Image.memory(ev.appIcon!, width: 40, height: 40)
+        : (ev.largeIcon != null ? Image.memory(ev.largeIcon!, width: 40, height: 40) : const Icon(Icons.notifications, size: 36));
+
+    // design: subtle elevated card aligned at top center with a small margin
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Material(
+          elevation: 6,
+          borderRadius: BorderRadius.circular(10),
+          color: Colors.white,
+          child: InkWell(
+            onTap: _openNotifPage,
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              constraints: const BoxConstraints(minHeight: 56),
+              child: Row(
+                children: [
+                  ClipRRect(borderRadius: BorderRadius.circular(8), child: iconWidget),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 4),
+                        Text(pkg, style: TextStyle(fontSize: 12, color: Colors.grey[700]), maxLines: 1, overflow: TextOverflow.ellipsis),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: _dismiss,
+                    icon: const Icon(Icons.close, size: 20),
+                    color: Colors.grey[700],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
