@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:developer';
-
 import 'package:flutter/material.dart';
 import 'package:notification_listener_service/notification_event.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
@@ -19,10 +18,59 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> {
   StreamSubscription<ServiceNotificationEvent>? _subscription;
   List<ServiceNotificationEvent> events = [];
+  bool _listening = false;
+  bool _permissionGranted = false;
 
   @override
   void initState() {
     super.initState();
+    _initNotifService();
+  }
+
+  Future<void> _initNotifService() async {
+    // cek izin dulu
+    final granted = await NotificationListenerService.isPermissionGranted();
+    setState(() => _permissionGranted = granted);
+
+    if (!granted) {
+      final req = await NotificationListenerService.requestPermission();
+      setState(() => _permissionGranted = req);
+    }
+
+    if (_permissionGranted) {
+      _startStream();
+    }
+  }
+
+  void _startStream() {
+    if (_subscription != null) return; // sudah aktif
+    _subscription = NotificationListenerService.notificationsStream.listen(
+      (event) {
+        log("Notif masuk: ${event.packageName} | ${event.title}");
+        setState(() {
+          events.insert(0, event); // masukkan di awal list
+        });
+      },
+      onError: (err) {
+        log("Stream error: $err");
+      },
+      onDone: () {
+        log("Stream selesai");
+      },
+    );
+    setState(() => _listening = true);
+  }
+
+  void _stopStream() {
+    _subscription?.cancel();
+    _subscription = null;
+    setState(() => _listening = false);
+  }
+
+  @override
+  void dispose() {
+    _subscription?.cancel();
+    super.dispose();
   }
 
   @override
@@ -31,114 +79,84 @@ class _MyAppState extends State<MyApp> {
       debugShowCheckedModeBanner: false,
       home: Scaffold(
         appBar: AppBar(
-          title: const Text('Plugin example app'),
+          title: const Text('Notification Listener Example'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: _initNotifService,
+            ),
+          ],
         ),
-        body: Center(
-          child: Column(
-            children: [
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    TextButton(
-                      onPressed: () async {
-                        final res = await NotificationListenerService
-                            .requestPermission();
-                        log("Is enabled: $res");
-                      },
-                      child: const Text("Request Permission"),
-                    ),
-                    const SizedBox(height: 20.0),
-                    TextButton(
-                      onPressed: () async {
-                        final bool res = await NotificationListenerService
-                            .isPermissionGranted();
-                        log("Is enabled: $res");
-                      },
-                      child: const Text("Check Permission"),
-                    ),
-                    const SizedBox(height: 20.0),
-                    TextButton(
-                      onPressed: () {
-                        _subscription = NotificationListenerService
-                            .notificationsStream
-                            .listen((event) {
-                          log("$event");
-                          setState(() {
-                            events.add(event);
-                          });
-                        });
-                      },
-                      child: const Text("Start Stream"),
-                    ),
-                    const SizedBox(height: 20.0),
-                    TextButton(
-                      onPressed: () {
-                        _subscription?.cancel();
-                      },
-                      child: const Text("Stop Stream"),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: events.length,
-                  itemBuilder: (_, index) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8.0),
-                    child: ListTile(
-                      onTap: () async {
-                        try {
-                          await events[index]
-                              .sendReply("This is an auto response");
-                        } catch (e) {
-                          log(e.toString());
-                        }
-                      },
-                      trailing: events[index].hasRemoved!
-                          ? const Text(
-                              "Removed",
-                              style: TextStyle(color: Colors.red),
-                            )
-                          : const SizedBox.shrink(),
-                      leading: events[index].appIcon == null
-                          ? const SizedBox.shrink()
-                          : Image.memory(
-                              events[index].appIcon!,
-                              width: 35.0,
-                              height: 35.0,
-                            ),
-                      title: Text(events[index].title ?? "No title"),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            events[index].content ?? "no content",
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 8.0),
-                          events[index].canReply!
-                              ? const Text(
-                                  "Replied with: This is an auto reply",
-                                  style: TextStyle(color: Colors.purple),
-                                )
-                              : const SizedBox.shrink(),
-                          events[index].largeIcon != null
-                              ? Image.memory(
-                                  events[index].largeIcon!,
-                                )
-                              : const SizedBox.shrink(),
-                        ],
-                      ),
-                      isThreeLine: true,
-                    ),
+        body: Column(
+          children: [
+            // status info
+            Container(
+              padding: const EdgeInsets.all(12),
+              color: _permissionGranted ? Colors.green[100] : Colors.red[100],
+              child: Row(
+                children: [
+                  Icon(
+                    _permissionGranted ? Icons.check_circle : Icons.warning,
+                    color: _permissionGranted ? Colors.green : Colors.red,
                   ),
-                ),
-              )
-            ],
-          ),
+                  const SizedBox(width: 8),
+                  Text(
+                    _permissionGranted
+                        ? "Permission granted"
+                        : "Permission not granted",
+                    style: const TextStyle(fontSize: 16),
+                  ),
+                  const Spacer(),
+                  Switch(
+                    value: _listening,
+                    onChanged: (val) {
+                      if (val) {
+                        _startStream();
+                      } else {
+                        _stopStream();
+                      }
+                    },
+                  ),
+                ],
+              ),
+            ),
+
+            const Divider(height: 1),
+
+            // list notifikasi
+            Expanded(
+              child: events.isEmpty
+                  ? const Center(child: Text("Belum ada notifikasi masuk"))
+                  : ListView.builder(
+                      itemCount: events.length,
+                      itemBuilder: (_, index) {
+                        final e = events[index];
+                        return ListTile(
+                          leading: e.appIcon != null
+                              ? Image.memory(e.appIcon!, width: 40, height: 40)
+                              : const Icon(Icons.notifications),
+                          title: Text(e.title ?? "(No title)"),
+                          subtitle: Text(
+                              "${e.packageName}\n${e.content ?? '(No content)'}"),
+                          trailing: e.hasRemoved == true
+                              ? const Icon(Icons.delete, color: Colors.red)
+                              : null,
+                          isThreeLine: true,
+                          onTap: () async {
+                            if (e.canReply == true) {
+                              try {
+                                await e.sendReply("This is auto reply");
+                                log("Reply sent to ${e.packageName}");
+                              } catch (err) {
+                                log("Reply failed: $err");
+                              }
+                            }
+                          },
+                        );
+                      },
+                    ),
+            ),
+          ],
         ),
       ),
     );
