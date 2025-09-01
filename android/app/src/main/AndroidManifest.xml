@@ -6,13 +6,17 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- Storage (Android 10 ke bawah) -->
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
 
     <!-- Kamera (opsional) -->
     <uses-permission android:name="android.permission.CAMERA" />
 
-    <!-- Android 13+ notifikasi runtime permission -->
+    <!-- Android 13+ runtime permission for notifications -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Foreground service permission -->
@@ -26,18 +30,18 @@
     <!-- Keep device awake -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
-    <!-- Query packages (untuk plugin installed_apps) -->
+    <!-- Query all installed apps (for installed_apps plugin) -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
-    <!-- Queries section -->
+    <!-- Queries for explicit intents -->
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
         <intent>
-            <action android:name="android.intent.action.PROCESS_TEXT"/>
-            <data android:mimeType="text/plain"/>
+            <action android:name="android.intent.action.PROCESS_TEXT" />
+            <data android:mimeType="text/plain" />
         </intent>
     </queries>
 
@@ -45,9 +49,9 @@
         android:name="${applicationName}"
         android:label="Xcreate Member"
         android:icon="@mipmap/ic_launcher"
+        android:allowBackup="true"
         android:usesCleartextTraffic="true"
-        tools:replace="android:allowBackup"
-        android:allowBackup="true">
+        tools:replace="android:allowBackup">
 
         <!-- MainActivity -->
         <activity
@@ -86,9 +90,9 @@
             android:foregroundServiceType="dataSync|connectedDevice|mediaProjection"
             android:exported="false" />
 
-        <!-- Notification listener service (pakai buatan sendiri) -->
+        <!-- Notification listener service -->
         <service
-            android:name=".MyNotificationListenerService"
+            android:name="com.example.myxcreate.MyNotificationListenerService"
             android:label="Xcreate Notifikasi"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
             android:exported="true">
@@ -98,6 +102,8 @@
         </service>
 
         <!-- Flutter embedding v2 -->
-        <meta-data android:name="flutterEmbedding" android:value="2" />
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
     </application>
 </manifest>
