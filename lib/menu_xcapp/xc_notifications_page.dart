@@ -1,11 +1,38 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:async';
 import 'dart:developer';
 import 'package:flutter/material.dart';
+import 'package:notification_listener_service/notification_event.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
-import 'package:notification_listener_service/notification_event.dart';
 import 'package:http/http.dart' as http;
+
+/// Model untuk menyimpan data notifikasi ke SharedPreferences
+class SavedNotification {
+  final String? packageName;
+  final String? title;
+  final String? content;
+  final Uint8List? icon;
+
+  SavedNotification({this.packageName, this.title, this.content, this.icon});
+
+  Map<String, dynamic> toJson() => {
+        'packageName': packageName,
+        'title': title,
+        'content': content,
+        'icon': icon?.toList(),
+      };
+
+  factory SavedNotification.fromJson(Map<String, dynamic> json) {
+    return SavedNotification(
+      packageName: json['packageName'],
+      title: json['title'],
+      content: json['content'],
+      icon: json['icon'] != null ? Uint8List.fromList(List<int>.from(json['icon'])) : null,
+    );
+  }
+}
 
 class XcNotificationsPage extends StatefulWidget {
   const XcNotificationsPage({super.key});
@@ -16,11 +43,11 @@ class XcNotificationsPage extends StatefulWidget {
 
 class _XcNotificationsPageState extends State<XcNotificationsPage>
     with TickerProviderStateMixin {
-  List<ServiceNotificationEvent> events = [];
+  List<SavedNotification> events = [];
   List<String> postLogs = [];
   String postUrl = '';
   bool streamRunning = false;
-  Stream<ServiceNotificationEvent>? _notifStream;
+  StreamSubscription<ServiceNotificationEvent>? _notifSub;
   late TabController _tabController;
 
   @override
@@ -43,28 +70,17 @@ class _XcNotificationsPageState extends State<XcNotificationsPage>
   Future<void> _loadSavedNotifications() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getStringList('saved_notifications') ?? [];
-    final list = raw.map((e) {
-      final m = json.decode(e) as Map<String, dynamic>;
-      return ServiceNotificationEvent(
-        packageName: m['packageName'],
-        title: m['title'],
-        content: m['content'],
-        appIcon: m['icon'] != null ? Uint8List.fromList(List<int>.from(m['icon'])) : null,
-      );
-    }).toList();
-    setState(() => events = list);
+    setState(() {
+      events = raw.map((e) {
+        final map = json.decode(e) as Map<String, dynamic>;
+        return SavedNotification.fromJson(map);
+      }).toList();
+    });
   }
 
   Future<void> _saveNotifications() async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = events.map((e) {
-      return json.encode({
-        'packageName': e.packageName,
-        'title': e.title,
-        'content': e.content,
-        'icon': e.appIcon?.toList(),
-      });
-    }).toList();
+    final raw = events.map((e) => json.encode(e.toJson())).toList();
     await prefs.setStringList('saved_notifications', raw);
   }
 
@@ -87,14 +103,19 @@ class _XcNotificationsPageState extends State<XcNotificationsPage>
       return;
     }
 
-    NotificationListenerService.startService();
-    _notifStream = NotificationListenerService.notificationsStream;
-
-    _notifStream!.listen((event) async {
+    _notifSub = NotificationListenerService.notificationsStream.listen((event) {
       setState(() {
-        events.insert(0, event);
+        events.insert(
+          0,
+          SavedNotification(
+            packageName: event.packageName,
+            title: event.title,
+            content: event.content,
+            icon: event.largeIcon ?? event.appIcon,
+          ),
+        );
       });
-      await _saveNotifications();
+      _saveNotifications();
 
       if (postUrl.isNotEmpty) {
         _postNotification(event);
@@ -116,20 +137,18 @@ class _XcNotificationsPageState extends State<XcNotificationsPage>
       final uri = Uri.tryParse(postUrl);
       if (uri == null) return;
 
-      final resp = await http.post(uri,
-          body: body, headers: {"Content-Type": "application/json"}).timeout(const Duration(seconds: 10));
+      final resp = await http
+          .post(uri, body: body, headers: {"Content-Type": "application/json"})
+          .timeout(const Duration(seconds: 10));
 
-      final logEntry = "${DateTime.now().toIso8601String()} - ${event.title} -> ${resp.statusCode}";
-      setState(() {
-        postLogs.insert(0, logEntry);
-      });
+      final logEntry =
+          "${DateTime.now().toIso8601String()} - ${event.title} -> ${resp.statusCode}";
+      setState(() => postLogs.insert(0, logEntry));
       await _saveLogs();
-
     } catch (e) {
-      final logEntry = "${DateTime.now().toIso8601String()} - ${event.title} -> ERROR: $e";
-      setState(() {
-        postLogs.insert(0, logEntry);
-      });
+      final logEntry =
+          "${DateTime.now().toIso8601String()} - ${event.title} -> ERROR: $e";
+      setState(() => postLogs.insert(0, logEntry));
       await _saveLogs();
     }
   }
@@ -146,8 +165,14 @@ class _XcNotificationsPageState extends State<XcNotificationsPage>
     await prefs.remove('post_logs');
   }
 
-  Widget _buildNotificationTile(ServiceNotificationEvent notif) {
-    final iconBytes = notif.appIcon;
+  void stopStream() {
+    _notifSub?.cancel();
+    _notifSub = null;
+    setState(() => streamRunning = false);
+  }
+
+  Widget _buildNotificationTile(SavedNotification notif) {
+    final iconBytes = notif.icon;
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -182,6 +207,12 @@ class _XcNotificationsPageState extends State<XcNotificationsPage>
   }
 
   @override
+  void dispose() {
+    _notifSub?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
@@ -208,7 +239,6 @@ class _XcNotificationsPageState extends State<XcNotificationsPage>
       body: TabBarView(
         controller: _tabController,
         children: [
-          // TAB Notifikasi
           events.isEmpty
               ? const Center(
                   child: Text("Belum ada notifikasi masuk",
@@ -222,7 +252,6 @@ class _XcNotificationsPageState extends State<XcNotificationsPage>
                         _buildNotificationTile(events[index]),
                   ),
                 ),
-          // TAB Log POST
           postLogs.isEmpty
               ? const Center(
                   child: Text("Belum ada log POST",
