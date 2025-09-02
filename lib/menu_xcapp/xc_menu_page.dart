@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:developer';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:notification_listener_service/notification_event.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 class XcMenuPage extends StatefulWidget {
   const XcMenuPage({super.key});
@@ -12,53 +14,101 @@ class XcMenuPage extends StatefulWidget {
 
 class _XcMenuPageState extends State<XcMenuPage> {
   bool streamRunning = false;
+  StreamSubscription<ServiceNotificationEvent>? _notificationSub;
+  final List<ServiceNotificationEvent> _notifications = [];
 
   void _showSnack(String text) {
     if (!mounted) return;
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(
+    ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(text),
         duration: const Duration(seconds: 2),
         behavior: SnackBarBehavior.floating,
-        margin: const EdgeInsets.only(top: 20, left: 20, right: 20),
+        margin: const EdgeInsets.all(16),
       ),
     );
   }
 
   Future<void> requestPermission() async {
-    if (await Permission.notification.isDenied) {
-      final res = await Permission.notification.request();
-      final ok = res.isGranted;
-      _showSnack(ok ? "Permission diberikan" : "Permission ditolak");
-    } else {
-      _showSnack("Permission sudah aktif");
+    try {
+      final status = await NotificationListenerService.requestPermission();
+      _showSnack(status ? "Akses notifikasi aktif" : "Akses notifikasi belum aktif");
+    } catch (e) {
+      log("Error requestPermission: $e");
+      _showSnack("Gagal meminta permission");
     }
-    final granted = await NotificationListenerService.requestPermission();
-    _showSnack(granted ? "Akses notifikasi aktif" : "Akses notifikasi belum aktif");
   }
 
   Future<void> checkPermission() async {
-    final granted = await NotificationListenerService.isPermissionGranted();
-    _showSnack(granted ? "Akses notifikasi aktif" : "Akses notifikasi TIDAK aktif");
+    try {
+      final status = await NotificationListenerService.isPermissionGranted();
+      _showSnack(status ? "Akses notifikasi aktif" : "Akses notifikasi TIDAK aktif");
+    } catch (e) {
+      log("Error checkPermission: $e");
+      _showSnack("Gagal cek permission");
+    }
   }
 
-  void startStream() {
-    NotificationListenerService.isPermissionGranted().then((granted) {
-      if (!granted) {
-        _showSnack("Berikan akses notifikasi dulu!");
-        return;
-      }
-      NotificationListenerService.startService(); // foreground service untuk background
-      _showSnack("Stream dimulai (Foreground service aktif)");
-      setState(() => streamRunning = true);
+  void startStream() async {
+    final granted = await NotificationListenerService.isPermissionGranted();
+    if (!granted) {
+      _showSnack("Berikan akses notifikasi dulu!");
+      return;
+    }
+
+    _notificationSub = NotificationListenerService.notificationsStream.listen((event) {
+      log("Notifikasi diterima: ${event.title} - ${event.content}");
+      setState(() {
+        _notifications.insert(0, event); // tampilkan terbaru di atas
+      });
     });
+
+    _showSnack("Stream dimulai");
+    setState(() => streamRunning = true);
   }
 
   void stopStream() {
-    NotificationListenerService.stopService();
-    _showSnack("Stream dihentikan");
-    setState(() => streamRunning = false);
+    try {
+      _notificationSub?.cancel();
+      _notificationSub = null;
+      _showSnack("Stream dihentikan");
+      setState(() => streamRunning = false);
+    } catch (e) {
+      log("Error stopStream: $e");
+      _showSnack("Gagal menghentikan stream");
+    }
+  }
+
+  Widget _buildNotificationTile(ServiceNotificationEvent event) {
+    Uint8List? icon = event.largeIcon ?? event.appIcon;
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      child: ListTile(
+        leading: icon != null ? Image.memory(icon, width: 40, height: 40) : null,
+        title: Text(event.title ?? "No Title"),
+        subtitle: Text(event.content ?? "No Content"),
+        trailing: event.canReply == true
+            ? IconButton(
+                icon: const Icon(Icons.reply),
+                onPressed: () async {
+                  try {
+                    await event.sendReply("Balasan otomatis");
+                    _showSnack("Balasan terkirim");
+                  } catch (e) {
+                    _showSnack("Gagal mengirim balasan");
+                    log(e.toString());
+                  }
+                },
+              )
+            : null,
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _notificationSub?.cancel();
+    super.dispose();
   }
 
   @override
@@ -72,6 +122,7 @@ class _XcMenuPageState extends State<XcMenuPage> {
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
+          // Menu Grid
           GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
@@ -96,15 +147,17 @@ class _XcMenuPageState extends State<XcMenuPage> {
                 child: Container(
                   decoration: BoxDecoration(
                     gradient: const LinearGradient(
-                        colors: [Color(0xFF8E2DE2), Color(0xFF4A00E0)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight),
+                      colors: [Color(0xFF8E2DE2), Color(0xFF4A00E0)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
                     borderRadius: BorderRadius.circular(16),
                     boxShadow: [
                       BoxShadow(
-                          color: Colors.deepPurple.withOpacity(0.3),
-                          blurRadius: 8,
-                          offset: const Offset(0, 4))
+                        color: Colors.deepPurple.withOpacity(0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 4),
+                      )
                     ],
                   ),
                   child: Column(
@@ -123,7 +176,9 @@ class _XcMenuPageState extends State<XcMenuPage> {
               );
             },
           ),
+
           const SizedBox(height: 24),
+          // Kontrol Notifikasi
           Card(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             elevation: 2,
@@ -146,33 +201,25 @@ class _XcMenuPageState extends State<XcMenuPage> {
                         onPressed: requestPermission,
                         icon: const Icon(Icons.lock_open),
                         label: const Text("Request Permission"),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.deepPurple,
-                        ),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.deepPurple),
                       ),
                       ElevatedButton.icon(
                         onPressed: checkPermission,
                         icon: const Icon(Icons.check),
                         label: const Text("Check Permission"),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.deepPurpleAccent,
-                        ),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.deepPurpleAccent),
                       ),
                       ElevatedButton.icon(
                         onPressed: streamRunning ? null : startStream,
                         icon: const Icon(Icons.play_arrow),
                         label: const Text("Start Stream"),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
-                        ),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
                       ),
                       ElevatedButton.icon(
                         onPressed: streamRunning ? stopStream : null,
                         icon: const Icon(Icons.stop),
                         label: const Text("Stop Stream"),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.redAccent,
-                        ),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
                       ),
                     ],
                   ),
@@ -183,10 +230,23 @@ class _XcMenuPageState extends State<XcMenuPage> {
                       Text(
                         streamRunning ? "ON" : "OFF",
                         style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: streamRunning ? Colors.green : Colors.red),
-                      )
+                          fontWeight: FontWeight.bold,
+                          color: streamRunning ? Colors.green : Colors.red,
+                        ),
+                      ),
                     ],
+                  ),
+                  const SizedBox(height: 12),
+                  // Daftar notifikasi
+                  Text("Notifikasi Terbaru:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  const SizedBox(height: 8),
+                  ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: _notifications.length,
+                    itemBuilder: (context, index) {
+                      return _buildNotificationTile(_notifications[index]);
+                    },
                   )
                 ],
               ),
