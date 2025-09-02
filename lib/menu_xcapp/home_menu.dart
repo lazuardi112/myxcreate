@@ -1,7 +1,3 @@
-// xcapp_foreground_notif_listener.dart
-// Versi lengkap: gabungan XcappPage (notification_listener_service) +
-// integrasi flutter_foreground_task sesuai dokumentasi resmi (pub.dev / GitHub).
-
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
@@ -16,21 +12,10 @@ import 'package:http/http.dart' as http;
 import 'package:installed_apps/installed_apps.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
-// -------------------------- ENTRY POINT --------------------------
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-
-  // Init communication port between UI isolate and background TaskHandler
-  FlutterForegroundTask.initCommunicationPort();
-
-  runApp(const MaterialApp(home: XcappPage()));
-}
-
 // -------------------------- Foreground Task callback (top-level) --------------------------
 // Callback must be top-level and marked so it isn't tree-shaken.
 @pragma('vm:entry-point')
 void startCallback() {
-  // The TaskHandler instance that will run in the background isolate.
   FlutterForegroundTask.setTaskHandler(MyTaskHandler());
 }
 
@@ -40,25 +25,24 @@ class MyTaskHandler extends TaskHandler {
 
   void _sendHeartbeat() {
     _count++;
-    // Update the ongoing notification with the latest counter.
     FlutterForegroundTask.updateService(
       notificationTitle: 'Xcapp Notif Listener',
       notificationText: 'heartbeats: $_count',
     );
 
-    // Send data back to main isolate (UI) if available.
-    FlutterForegroundTask.sendDataToMain({'type': 'heartbeat', 'count': _count, 'time': DateTime.now().toIso8601String()});
+    FlutterForegroundTask.sendDataToMain({
+      'type': 'heartbeat',
+      'count': _count,
+      'time': DateTime.now().toIso8601String()
+    });
   }
 
   // Called when the task is started.
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
     log('[FG] onStart(starter: ${starter.name})');
-
-    // Lightweight periodic work to keep isolate doing something.
-    _timer = Timer.periodic(const Duration(seconds: 10), (_) {
-      _sendHeartbeat();
-    });
+    // keep simple periodic heartbeat
+    _timer = Timer.periodic(const Duration(seconds: 10), (_) => _sendHeartbeat());
   }
 
   // Called periodically according to ForegroundTaskOptions.eventAction
@@ -77,8 +61,11 @@ class MyTaskHandler extends TaskHandler {
   @override
   void onNotificationButtonPressed(String id) {
     log('[FG] onNotificationButtonPressed: $id');
-    // Optionally, you can handle button press and send message to UI/main.
     FlutterForegroundTask.sendDataToMain({'type': 'button', 'id': id});
+    if (id == 'btn_stop') {
+      // stop service on button pressed
+      FlutterForegroundTask.stopService();
+    }
   }
 
   @override
@@ -89,6 +76,66 @@ class MyTaskHandler extends TaskHandler {
   @override
   void onNotificationDismissed() {
     log('[FG] onNotificationDismissed');
+  }
+
+  // This receives data from main (sendDataToTask)
+  @override
+  void onReceiveData(Object data) {
+    // onReceiveData is synchronous but we can start async work inside
+    Future(() async {
+      try {
+        // data may be Map or String
+        Map<String, dynamic> payload;
+        if (data is String) {
+          payload = jsonDecode(data) as Map<String, dynamic>;
+        } else if (data is Map) {
+          payload = Map<String, dynamic>.from(data);
+        } else {
+          log('[FG] onReceiveData: unsupported data => $data');
+          return;
+        }
+
+        // Ambil postUrl yang disimpan oleh main isolate
+final dynamic stored = await FlutterForegroundTask.getData(key: 'postUrl');
+final String? postUrl = stored?.toString();
+
+if (postUrl == null || postUrl.isEmpty) {
+  FlutterForegroundTask.sendDataToMain({
+    'type': 'post_result',
+    'ok': false,
+    'message': 'No postUrl configured',
+    'payload': payload
+  });
+  log('[FG] No postUrl configured, dropping payload');
+  return;
+}
+
+
+        // prepare body
+        final body = jsonEncode({
+          'app': payload['app'] ?? '',
+          'title': payload['title'] ?? '',
+          'text': payload['text'] ?? '',
+          'timestamp': payload['timestamp'] ?? DateTime.now().toIso8601String(),
+        });
+
+        // attempt POST
+        try {
+          final uri = Uri.tryParse(postUrl);
+          if (uri == null) {
+            FlutterForegroundTask.sendDataToMain({'type': 'post_result', 'ok': false, 'message': 'Invalid postUrl', 'postUrl': postUrl});
+            return;
+          }
+          final resp = await http.post(uri, body: body, headers: {'Content-Type': 'application/json'}).timeout(const Duration(seconds: 15));
+          final ok = resp.statusCode >= 200 && resp.statusCode < 300;
+          FlutterForegroundTask.sendDataToMain({'type': 'post_result', 'ok': ok, 'code': resp.statusCode, 'body': resp.body, 'payload': payload});
+        } catch (e) {
+          FlutterForegroundTask.sendDataToMain({'type': 'post_result', 'ok': false, 'message': e.toString(), 'payload': payload});
+        }
+      } catch (e) {
+        log('[FG] Exception in onReceiveData async: $e');
+      }
+    });
   }
 }
 
@@ -121,14 +168,25 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
   // Foreground task data listener
   final ValueNotifier<Object?> _taskData = ValueNotifier(null);
 
+  // controllers
+  late final TextEditingController _postUrlController;
+
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
-    _loadAllSettings();
+    _postUrlController = TextEditingController();
 
     // Receive data from TaskHandler via callback registration
     FlutterForegroundTask.addTaskDataCallback(_onReceiveTaskData);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      // initialize FlutterForegroundTask (notification/channel/options)
+      _initForegroundTaskDefault();
+    });
+
+    // load persisted settings
+    _loadAllSettings();
   }
 
   @override
@@ -136,13 +194,32 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
     _subscription?.cancel();
     FlutterForegroundTask.removeTaskDataCallback(_onReceiveTaskData);
     _tabController.dispose();
+    _postUrlController.dispose();
     super.dispose();
   }
 
   void _onReceiveTaskData(Object? data) {
     _taskData.value = data;
-    // you can parse and react to heartbeat/button events here
     log('[UI] Received from FG task: $data');
+
+    // react to post results to keep UI logs
+    if (data is Map) {
+      final t = data['type'];
+      if (t == 'post_result') {
+        final Map<String, dynamic> l = {
+          'time': DateTime.now().toIso8601String(),
+          'package': (data['payload']?['app']) ?? '',
+          'title': (data['payload']?['title']) ?? '',
+          'success': data['ok'] == true,
+          'code': data['code'] ?? 0,
+          'message': data['body'] ?? data['message'] ?? '',
+        };
+        postLogs.insert(0, l);
+        if (postLogs.length > 1000) postLogs = postLogs.sublist(0, 1000);
+        _savePostLogs();
+        if (mounted) setState(() {});
+      }
+    }
   }
 
   Future<void> _loadAllSettings() async {
@@ -152,6 +229,7 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
     await _loadAppToggles();
     await _loadSavedNotifications();
     await _loadPostLogs();
+
     if (streamRunning) {
       startStream();
     }
@@ -191,27 +269,59 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
   }
 
   Future<void> loadUsername() async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     setState(() {
       username = prefs.getString('username') ?? 'User';
     });
   }
 
   Future<void> _loadPostUrl() async {
+  try {
     final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      postUrl = prefs.getString('notif_post_url') ?? '';
-    });
-  }
+    final loaded = prefs.getString('notif_post_url') ?? '';
+    postUrl = loaded;
+    _postUrlController.text = postUrl;
 
-  Future<void> _savePostUrl(String url) async {
+    // Simpan juga ke Foreground Task kalau service sudah jalan
+    if (postUrl.isNotEmpty) {
+      try {
+        await FlutterForegroundTask.saveData(key: 'postUrl', value: postUrl);
+      } catch (e) {
+        debugPrint('Gagal saveData ke ForegroundTask: $e');
+      }
+    }
+
+    if (mounted) setState(() {});
+  } catch (e) {
+    debugPrint('Error loadPostUrl: $e');
+  }
+}
+
+Future<void> _savePostUrl(String url) async {
+  try {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('notif_post_url', url);
-    setState(() => postUrl = url);
+    postUrl = url;
+    _postUrlController.text = url;
+
+    // Simpan juga ke Foreground Task kalau service sudah jalan
+    try {
+      await FlutterForegroundTask.saveData(key: 'postUrl', value: url);
+    } catch (e) {
+      debugPrint('Gagal saveData ke ForegroundTask: $e');
+    }
+
+    if (mounted) setState(() {});
+  } catch (e) {
+    debugPrint('Error savePostUrl: $e');
   }
+}
+
 
   Future<void> _loadStreamFlag() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     setState(() {
       streamRunning = prefs.getBool('notif_stream_running') ?? false;
     });
@@ -220,7 +330,7 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
   Future<void> _saveStreamFlag(bool v) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('notif_stream_running', v);
-    setState(() => streamRunning = v);
+    if (mounted) setState(() => streamRunning = v);
   }
 
   Future<void> _loadAppToggles() async {
@@ -228,9 +338,13 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
     final s = prefs.getString('notif_app_toggles');
     if (s != null) {
       final Map<String, dynamic> m = json.decode(s);
-      setState(() {
+      if (mounted) {
+        setState(() {
+          appToggles = m.map((k, v) => MapEntry(k, v as bool));
+        });
+      } else {
         appToggles = m.map((k, v) => MapEntry(k, v as bool));
-      });
+      }
     } else {
       appToggles = {};
     }
@@ -243,7 +357,13 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
 
   // ---------------- permission & controls ----------------
   Future<void> requestPermission() async {
-    // request runtime notification permission (Android 13+)
+    try {
+      final NotificationPermission notificationPermission = await FlutterForegroundTask.checkNotificationPermission();
+      if (notificationPermission != NotificationPermission.granted) {
+        await FlutterForegroundTask.requestNotificationPermission();
+      }
+    } catch (_) {}
+
     if (await Permission.notification.isDenied) {
       final res = await Permission.notification.request();
       final ok = res.isGranted;
@@ -253,16 +373,45 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
       _showSnack('Permission notifikasi sudah aktif');
     }
 
-    // Also open notification access setting (special access)
-    final granted = await NotificationListenerService.requestPermission();
-    _showSnack(granted ? 'Akses notifikasi diaktifkan' : 'Akses notifikasi belum diaktifkan');
-    log('NotificationListenerService.requestPermission() => $granted');
+    // Also request NotificationListener special access
+    try {
+      final granted = await NotificationListenerService.requestPermission();
+      _showSnack(granted ? 'Akses notifikasi diaktifkan' : 'Akses notifikasi belum diaktifkan');
+      log('NotificationListenerService.requestPermission() => $granted');
+    } catch (e) {
+      log('Error requesting NotificationListener permission: $e');
+    }
   }
 
   Future<void> checkPermission() async {
     final status = await NotificationListenerService.isPermissionGranted();
     _showSnack(status ? 'Akses notifikasi aktif' : 'Akses notifikasi TIDAK aktif');
     log('isPermissionGranted => $status');
+  }
+
+  // ---------------- init FG task ----------------
+  void _initForegroundTaskDefault() {
+    FlutterForegroundTask.init(
+      androidNotificationOptions: AndroidNotificationOptions(
+        channelId: 'xcapp_channel',
+        channelName: 'Xcapp Foreground Service',
+        channelDescription: 'Menjaga listener notifikasi tetap hidup',
+        channelImportance: NotificationChannelImportance.DEFAULT,
+        priority: NotificationPriority.LOW,
+        onlyAlertOnce: true,
+      ),
+      iosNotificationOptions: const IOSNotificationOptions(
+        showNotification: true,
+        playSound: false,
+      ),
+      foregroundTaskOptions: ForegroundTaskOptions(
+        eventAction: ForegroundTaskEventAction.repeat(10000), // 10s
+        autoRunOnBoot: false,
+        autoRunOnMyPackageReplaced: false,
+        allowWakeLock: true,
+        allowWifiLock: true,
+      ),
+    );
   }
 
   // ---------------- start/stop foreground service helpers ----------------
@@ -273,30 +422,6 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
         log('[FG] Service already running');
         return;
       }
-
-      FlutterForegroundTask.init(
-  androidNotificationOptions: AndroidNotificationOptions(
-    channelId: 'xcapp_channel',
-    channelName: 'Xcapp Foreground Service',
-    channelDescription: 'Menjaga listener notifikasi tetap hidup',
-    channelImportance: NotificationChannelImportance.DEFAULT,
-    priority: NotificationPriority.LOW,
-    onlyAlertOnce: true,
-  ),
-  iosNotificationOptions: const IOSNotificationOptions(
-    showNotification: true,
-    playSound: false,
-  ),
-  foregroundTaskOptions: ForegroundTaskOptions(
-    eventAction: ForegroundTaskEventAction.repeat(10000), // 10s
-    autoRunOnBoot: false,
-    autoRunOnMyPackageReplaced: false,
-    allowWakeLock: true,
-    allowWifiLock: true,
-  ),
-);
-
-
 
       await FlutterForegroundTask.startService(
         serviceId: 199,
@@ -329,47 +454,70 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
   }
 
   // ---------------- stream start/stop ----------------
-  void startStream() {
-    NotificationListenerService.isPermissionGranted().then((granted) async {
-      if (!granted) {
-        _showSnack("Akses notifikasi belum diberikan. Tekan Request Permission dulu.");
-        return;
-      }
-      _subscription?.cancel();
-      _subscription = NotificationListenerService.notificationsStream.listen((event) async {
+  void startStream() async {
+    final granted = await NotificationListenerService.isPermissionGranted();
+    if (!granted) {
+      _showSnack("Akses notifikasi belum diberikan. Tekan Request Permission dulu.");
+      return;
+    }
+
+    _subscription?.cancel();
+    _subscription = NotificationListenerService.notificationsStream.listen((event) async {
+      try {
         log("[notif] ${event.packageName} : ${event.title} - ${event.content}");
         final pkg = event.packageName ?? '';
         if (appToggles.isNotEmpty && appToggles.containsKey(pkg) && appToggles[pkg] == false) {
           log("Ignored app (toggle off): $pkg");
           return;
         }
+
         // store event in memory and persist minimal fields
-        setState(() {
-          events.insert(0, event);
-        });
+        if (mounted) {
+          setState(() {
+            events.insert(0, event);
+          });
+        }
         await _saveNotificationToPrefs(event);
+
+        // Send the notification to background TaskHandler for POSTing
+        final payload = {
+          'app': event.packageName ?? '',
+          'title': event.title ?? '',
+          'text': event.content ?? '',
+          'timestamp': DateTime.now().toIso8601String(),
+        };
+
+        try {
+          FlutterForegroundTask.sendDataToTask(jsonEncode(payload));
+        } catch (e) {
+          log('[UI] Failed to sendDataToTask: $e');
+        }
+
+        // Optionally also attempt to POST from UI (best-effort), but main purpose is BG
         if (postUrl.isNotEmpty) {
           _postNotification(event);
         }
-      }, onError: (e) {
-        log("Stream error: $e");
-      }, cancelOnError: false);
+      } catch (e) {
+        log('Error handling notification event: $e');
+      }
+    }, onError: (e) {
+      log("Stream error: $e");
+    }, cancelOnError: false);
 
-      // mark running
-      await _saveStreamFlag(true);
-      setState(() => streamRunning = true);
-      _showSnack("Stream notifikasi dimulai");
-      log("▶️ Stream started");
+    // mark running
+    await _saveStreamFlag(true);
+    if (mounted) setState(() => streamRunning = true);
+    _showSnack("Stream notifikasi dimulai");
+    log("▶️ Stream started");
 
-      // Start foreground service to keep process alive (best-effort)
-      await startForegroundServiceIfNeeded();
-    });
+    // Start foreground service to keep process alive (best-effort)
+    await startForegroundServiceIfNeeded();
   }
 
   void stopStream() {
     _subscription?.cancel();
     _saveStreamFlag(false);
-    setState(() => streamRunning = false);
+    if (mounted) setState(() => streamRunning = false);
     _showSnack("Stream notifikasi dihentikan");
     log("🛑 Stream stopped");
 
@@ -397,7 +545,7 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
     }
   }
 
-  // ---------------- post notification ----------------
+  // ---------------- post notification (UI fallback) ----------------
   Future<void> _postNotification(ServiceNotificationEvent event) async {
     final uri = Uri.tryParse(postUrl);
     if (uri == null) {
@@ -435,6 +583,7 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
     postLogs.insert(0, logEntry);
     if (postLogs.length > 1000) postLogs = postLogs.sublist(0, 1000);
     await _savePostLogs();
+    if (mounted) setState(() {});
   }
 
   // ---------------- installed apps ----------------
@@ -457,7 +606,7 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
       log("Failed load installed apps: $e");
       _showSnack("Gagal memuat daftar aplikasi: $e");
     } finally {
-      setState(() => loadingApps = false);
+      if (mounted) setState(() => loadingApps = false);
     }
   }
 
@@ -498,17 +647,7 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
     }
   }
 
-  // ---------------- select all / deselect all ----------------
-  void selectAllApps() {
-    for (var a in installedApps) {
-      final pkg = _extractPkgName(a);
-      if (pkg != null) appToggles[pkg] = true;
-    }
-    _saveAppToggles();
-    _showSnack("Semua aplikasi dipilih");
-    setState(() {});
-  }
-
+  // ---------------- deselect all ----------------
   void deselectAllApps() {
     for (var a in installedApps) {
       final pkg = _extractPkgName(a);
@@ -516,7 +655,7 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
     }
     _saveAppToggles();
     _showSnack("Semua aplikasi dibatalkan pilih");
-    setState(() {});
+    if (mounted) setState(() {});
   }
 
   // ---------------- UI helpers ----------------
@@ -611,11 +750,11 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
               const Text('Kontrol Notifikasi', style: TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
               Wrap(spacing: 8, runSpacing: 8, children: [
-                ElevatedButton.icon(onPressed: requestPermission, icon: const Icon(Icons.lock_open), label: const Text('Request Permission'), style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6C22E0))),
-                ElevatedButton.icon(onPressed: checkPermission, icon: const Icon(Icons.check), label: const Text('Check Permission'), style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6C22E0))),
-                ElevatedButton.icon(onPressed: streamRunning ? null : startStream, icon: const Icon(Icons.play_arrow), label: const Text('Start Stream'), style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A86B))),
-                ElevatedButton.icon(onPressed: streamRunning ? stopStream : null, icon: const Icon(Icons.stop), label: const Text('Stop Stream'), style: ElevatedButton.styleFrom(backgroundColor: Colors.red)),
-                ElevatedButton.icon(onPressed: loadInstalledApps, icon: const Icon(Icons.apps), label: const Text('Load Installed Apps'), style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6C22E0))),
+                ElevatedButton.icon(onPressed: requestPermission, icon: const Icon(Icons.lock_open), label: const Text('Request Permission'), style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6C22E0), foregroundColor: Colors.white)),
+                ElevatedButton.icon(onPressed: checkPermission, icon: const Icon(Icons.check), label: const Text('Check Permission'), style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6C22E0), foregroundColor: Colors.white)),
+                ElevatedButton.icon(onPressed: streamRunning ? null : startStream, icon: const Icon(Icons.play_arrow), label: const Text('Start Stream'), style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A86B), foregroundColor: Colors.white)),
+                ElevatedButton.icon(onPressed: streamRunning ? stopStream : null, icon: const Icon(Icons.stop), label: const Text('Stop Stream'), style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white)),
+                ElevatedButton.icon(onPressed: loadInstalledApps, icon: const Icon(Icons.apps), label: const Text('Load Installed Apps'), style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6C22E0), foregroundColor: Colors.white)),
               ]),
               const SizedBox(height: 8),
               Text('Stream: ${streamRunning ? 'ON' : 'OFF'}'),
@@ -678,10 +817,10 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
       ])),
       Expanded(
         child: events.isEmpty
-            ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: const [Icon(Icons.notifications_none, size: 56, color: Colors.grey), SizedBox(height: 8), Text('Belum ada notifikasi masuk')]))
+            ? const Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.notifications_none, size: 56, color: Colors.grey), SizedBox(height: 8), Text('Belum ada notifikasi masuk')]))
             : RefreshIndicator(
                 onRefresh: () async {
-                  setState(() {});
+                  if (mounted) setState(() {});
                 },
                 child: ListView.builder(
                   padding: const EdgeInsets.only(top: 8, bottom: 12),
@@ -708,33 +847,32 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
               const Align(alignment: Alignment.centerLeft, child: Text('Post incoming notifications to URL', style: TextStyle(fontWeight: FontWeight.bold))),
               const SizedBox(height: 8),
               TextFormField(
-                initialValue: postUrl,
+                controller: _postUrlController,
                 decoration: const InputDecoration(hintText: 'https://yourserver.com/endpoint', border: OutlineInputBorder()),
-                onChanged: (v) => setState(() => postUrl = v),
+                onChanged: (v) => postUrl = v,
               ),
               const SizedBox(height: 8),
               Row(children: [
                 ElevatedButton.icon(
                     onPressed: () {
-                      if (postUrl.isEmpty) {
+                      if (_postUrlController.text.trim().isEmpty) {
                         _showSnack('Isi dulu URL sebelum simpan');
                         return;
                       }
-                      _savePostUrl(postUrl);
+                      _savePostUrl(_postUrlController.text.trim());
                       _showSnack('URL disimpan');
                     },
                     icon: const Icon(Icons.save),
                     label: const Text('Simpan URL'),
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6C22E0))),
+                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6C22E0), foregroundColor: Colors.white)),
                 const SizedBox(width: 12),
-                TextButton(
+                ElevatedButton(
                     onPressed: () {
-                      setState(() {
-                        postUrl = '';
-                      });
+                      _postUrlController.clear();
                       _savePostUrl('');
                       _showSnack('URL dihapus');
                     },
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.grey, foregroundColor: Colors.white),
                     child: const Text('Hapus')),
               ])
             ]),
@@ -748,10 +886,7 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
             child: Column(children: [
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                 const Text('Aplikasi yang diambil notifikasi', style: TextStyle(fontWeight: FontWeight.bold)),
-                Row(children: [
-                  TextButton(onPressed: selectAllApps, child: const Text('Select All')),
-                  TextButton(onPressed: deselectAllApps, child: const Text('Deselect All')),
-                ])
+                ElevatedButton(onPressed: deselectAllApps, style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6C22E0), foregroundColor: Colors.white), child: const Text('Deselect All')),
               ]),
               const SizedBox(height: 8),
               loadingApps
@@ -785,7 +920,7 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
           ),
         ),
         const SizedBox(height: 12),
-        const Text('Catatan: aktifkan only the apps you want to receive notifications from.')
+        const Text('Catatan: aktifkan only the apps you want to receive notifications from.'),
       ]),
     );
   }
@@ -850,26 +985,3 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
     );
   }
 }
-
-// ----------------- AndroidManifest & installation steps -----------------
-// Tambahkan permission di android/app/src/main/AndroidManifest.xml:
-// <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-// <uses-permission android:name="android.permission.POST_NOTIFICATIONS" /> <!-- targetSdk >= 33 -->
-//
-// Di dalam <application> tambahkan service (flutter_foreground_task membutuhkan entry ini):
-// <service
-//    android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
-//    android:exported="true"
-//    android:foregroundServiceType="dataSync|location" />
-//
-// pubspec.yaml (contoh):
-// flutter_foreground_task: ^8.0.0
-// notification_listener_service: ^x.y.z
-// installed_apps: ^1.6.0
-// permission_handler: ^10.2.0
-// shared_preferences: ^2.0.0
-// http: ^0.13.0
-//
-// Catatan:
-// - Beberapa vendor Android dapat mematikan service jika aplikasi tidak di-whitelist.
-// - Jika butuh keandalan mutlak, pertimbangkan memindahkan pengiriman HTTP ke kode native (Kotlin) di foreground service dan expose ke Flutter melalui MethodChannel.
