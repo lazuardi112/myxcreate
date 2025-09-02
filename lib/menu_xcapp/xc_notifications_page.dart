@@ -3,12 +3,13 @@ import 'dart:typed_data';
 import 'dart:async';
 import 'dart:developer';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:notification_listener_service/notification_event.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 
-/// Model untuk menyimpan data notifikasi ke SharedPreferences
+/// Model notifikasi yang disimpan
 class SavedNotification {
   final String? packageName;
   final String? title;
@@ -29,7 +30,9 @@ class SavedNotification {
       packageName: json['packageName'],
       title: json['title'],
       content: json['content'],
-      icon: json['icon'] != null ? Uint8List.fromList(List<int>.from(json['icon'])) : null,
+      icon: json['icon'] != null
+          ? Uint8List.fromList(List<int>.from(json['icon']))
+          : null,
     );
   }
 }
@@ -49,6 +52,9 @@ class _XcNotificationsPageState extends State<XcNotificationsPage>
   bool streamRunning = false;
   StreamSubscription<ServiceNotificationEvent>? _notifSub;
   late TabController _tabController;
+
+  /// MethodChannel untuk memanggil Foreground Service di Android
+  static const _platform = MethodChannel('com.example.myxcreate/bg');
 
   @override
   void initState() {
@@ -71,10 +77,8 @@ class _XcNotificationsPageState extends State<XcNotificationsPage>
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getStringList('saved_notifications') ?? [];
     setState(() {
-      events = raw.map((e) {
-        final map = json.decode(e) as Map<String, dynamic>;
-        return SavedNotification.fromJson(map);
-      }).toList();
+      events =
+          raw.map((e) => SavedNotification.fromJson(json.decode(e))).toList();
     });
   }
 
@@ -103,20 +107,28 @@ class _XcNotificationsPageState extends State<XcNotificationsPage>
       return;
     }
 
-    _notifSub = NotificationListenerService.notificationsStream.listen((event) {
+    // Jalankan Foreground Service Android agar app tidak dibunuh
+    try {
+      await _platform.invokeMethod('startForegroundService');
+    } catch (e) {
+      log('startForegroundService error: $e');
+    }
+
+    // Mulai stream notifikasi
+    _notifSub =
+        NotificationListenerService.notificationsStream.listen((event) {
+      // Simpan notifikasi terbaru
+      final notif = SavedNotification(
+          packageName: event.packageName,
+          title: event.title,
+          content: event.content,
+          icon: event.largeIcon ?? event.appIcon);
       setState(() {
-        events.insert(
-          0,
-          SavedNotification(
-            packageName: event.packageName,
-            title: event.title,
-            content: event.content,
-            icon: event.largeIcon ?? event.appIcon,
-          ),
-        );
+        events.insert(0, notif);
       });
       _saveNotifications();
 
+      // POST notifikasi jika postUrl ada
       if (postUrl.isNotEmpty) {
         _postNotification(event);
       }
@@ -165,9 +177,17 @@ class _XcNotificationsPageState extends State<XcNotificationsPage>
     await prefs.remove('post_logs');
   }
 
-  void stopStream() {
+  void stopStream() async {
     _notifSub?.cancel();
     _notifSub = null;
+
+    //
+    try {
+      await _platform.invokeMethod('stopForegroundService');
+    } catch (e) {
+      log('stopForegroundService error: $e');
+    }
+
     setState(() => streamRunning = false);
   }
 
@@ -181,7 +201,7 @@ class _XcNotificationsPageState extends State<XcNotificationsPage>
         leading: iconBytes != null
             ? Image.memory(iconBytes, width: 40, height: 40)
             : CircleAvatar(
-                backgroundColor: Colors.deepPurple,
+                backgroundColor: Colors.deepPurple[400],
                 child: Text(
                   (notif.packageName?.substring(0, 1).toUpperCase()) ?? '?',
                   style: const TextStyle(color: Colors.white),
@@ -199,16 +219,18 @@ class _XcNotificationsPageState extends State<XcNotificationsPage>
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      color: Colors.grey.shade200,
+      color: Colors.deepPurple[50],
       child: ListTile(
-        title: Text(log, style: const TextStyle(fontSize: 13)),
+        title: Text(log,
+            style: const TextStyle(fontSize: 13, color: Colors.black87)),
       ),
     );
   }
 
   @override
   void dispose() {
-    _notifSub?.cancel();
+    stopStream();
+    _tabController.dispose();
     super.dispose();
   }
 

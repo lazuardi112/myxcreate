@@ -5,11 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
 import 'package:notification_listener_service/notification_event.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/services.dart';
 
-/// Auto Reply page
-/// Tabs: WhatsApp, WhatsApp Business, Telegram
-/// Rules stored in SharedPreferences under key 'auto_rules'
-/// Logs under key 'auto_reply_logs'
+/// Auto Reply page with background support and modern UI
 class XcAutoPage extends StatefulWidget {
   const XcAutoPage({super.key});
 
@@ -22,6 +20,9 @@ class _XcAutoPageState extends State<XcAutoPage> with TickerProviderStateMixin {
   List<Map<String, dynamic>> rules = [];
   List<Map<String, dynamic>> logs = [];
   StreamSubscription<ServiceNotificationEvent>? _sub;
+
+  // Android background service channel
+  static const _platform = MethodChannel('com.example.myxcreate/bg');
 
   final Map<String, String> apps = {
     'com.whatsapp': 'WhatsApp',
@@ -39,7 +40,7 @@ class _XcAutoPageState extends State<XcAutoPage> with TickerProviderStateMixin {
 
   @override
   void dispose() {
-    _sub?.cancel();
+    _stopListener();
     _tabs.dispose();
     super.dispose();
   }
@@ -88,7 +89,6 @@ class _XcAutoPageState extends State<XcAutoPage> with TickerProviderStateMixin {
   void _startListener() async {
     bool granted = await NotificationListenerService.isPermissionGranted();
     if (!granted) {
-      // Jika belum ada permission, minta permission
       granted = await NotificationListenerService.requestPermission();
       if (!granted) {
         log("Notification permission denied");
@@ -96,13 +96,29 @@ class _XcAutoPageState extends State<XcAutoPage> with TickerProviderStateMixin {
       }
     }
 
-    // Mulai listen stream notifikasi
+    // Start foreground service for background support
+    try {
+      await _platform.invokeMethod('startForegroundService');
+    } catch (e) {
+      log("Foreground service error: $e");
+    }
+
     _sub?.cancel();
     _sub = NotificationListenerService.notificationsStream.listen((event) {
       _handleIncoming(event);
     }, onError: (e) {
       log("Auto listener error: $e");
     }, cancelOnError: false);
+  }
+
+  void _stopListener() async {
+    _sub?.cancel();
+    _sub = null;
+    try {
+      await _platform.invokeMethod('stopForegroundService');
+    } catch (e) {
+      log("Stop foreground error: $e");
+    }
   }
 
   Future<void> _handleIncoming(ServiceNotificationEvent event) async {
@@ -163,139 +179,134 @@ class _XcAutoPageState extends State<XcAutoPage> with TickerProviderStateMixin {
     setState(() {});
   }
 
-  List<Map<String, dynamic>> _rulesForPackage(String pkg) {
-    return rules.where((r) => (r['package'] ?? '') == pkg).toList();
-  }
+  List<Map<String, dynamic>> _rulesForPackage(String pkg) =>
+      rules.where((r) => (r['package'] ?? '') == pkg).toList();
 
   Future<void> _showAddRuleDialog(String pkg) async {
     final patternCtrl = TextEditingController();
     final responsesCtrl = TextEditingController();
     await showDialog(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: const Text('Tambah Auto-Reply'),
-          content: SingleChildScrollView(
-            child: Column(
-              children: [
-                DropdownButtonFormField<String>(
-                  value: pkg,
-                  items: apps.entries
-                      .map((e) => DropdownMenuItem(
-                          value: e.key, child: Text("${e.value} (${e.key})")))
-                      .toList(),
-                  onChanged: (_) {},
-                  disabledHint: Text(apps[pkg] ?? pkg),
-                ),
-                const SizedBox(height: 8),
-                TextFormField(
-                  controller: patternCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Pattern (kosong = match semua)',
-                    border: OutlineInputBorder(),
+        context: context,
+        builder: (ctx) {
+          return AlertDialog(
+            title: const Text('Tambah Auto-Reply'),
+            content: SingleChildScrollView(
+              child: Column(
+                children: [
+                  DropdownButtonFormField<String>(
+                    value: pkg,
+                    items: apps.entries
+                        .map((e) => DropdownMenuItem(
+                            value: e.key, child: Text("${e.value} (${e.key})")))
+                        .toList(),
+                    onChanged: (_) {},
+                    disabledHint: Text(apps[pkg] ?? pkg),
                   ),
-                ),
-                const SizedBox(height: 8),
-                TextFormField(
-                  controller: responsesCtrl,
-                  minLines: 2,
-                  maxLines: 6,
-                  decoration: const InputDecoration(
-                    labelText: 'Responses (pisah baris)',
-                    border: OutlineInputBorder(),
+                  const SizedBox(height: 8),
+                  TextFormField(
+                    controller: patternCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Pattern (kosong = match semua)',
+                      border: OutlineInputBorder(),
+                    ),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 8),
+                  TextFormField(
+                    controller: responsesCtrl,
+                    minLines: 2,
+                    maxLines: 6,
+                    decoration: const InputDecoration(
+                      labelText: 'Responses (pisah baris)',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Batal')),
-            ElevatedButton(
-              onPressed: () async {
-                final pattern = patternCtrl.text.trim();
-                final responses = responsesCtrl.text
-                    .split('\n')
-                    .map((s) => s.trim())
-                    .where((s) => s.isNotEmpty)
-                    .toList();
-                if (responses.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                      content: Text('Masukkan minimal 1 response')));
-                  return;
-                }
-                final newRule = {
-                  'id': DateTime.now().millisecondsSinceEpoch.toString(),
-                  'package': pkg,
-                  'pattern': pattern,
-                  'responses': responses,
-                  'enabled': true,
-                };
-                setState(() => rules.insert(0, newRule));
-                await _saveRules();
-                Navigator.pop(ctx);
-              },
-              child: const Text('Simpan'),
-            ),
-          ],
-        );
-      },
-    );
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Batal')),
+              ElevatedButton(
+                  onPressed: () async {
+                    final pattern = patternCtrl.text.trim();
+                    final responses = responsesCtrl.text
+                        .split('\n')
+                        .map((s) => s.trim())
+                        .where((s) => s.isNotEmpty)
+                        .toList();
+                    if (responses.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                          content: Text('Masukkan minimal 1 response')));
+                      return;
+                    }
+                    final newRule = {
+                      'id': DateTime.now().millisecondsSinceEpoch.toString(),
+                      'package': pkg,
+                      'pattern': pattern,
+                      'responses': responses,
+                      'enabled': true,
+                    };
+                    setState(() => rules.insert(0, newRule));
+                    await _saveRules();
+                    Navigator.pop(ctx);
+                  },
+                  child: const Text('Simpan')),
+            ],
+          );
+        });
   }
 
   Future<void> _showEditRuleDialog(Map<String, dynamic> r) async {
     final patternCtrl = TextEditingController(text: r['pattern'] ?? '');
-    final responsesCtrl = TextEditingController(
-        text: (r['responses'] as List<dynamic>).join('\n'));
+    final responsesCtrl =
+        TextEditingController(text: (r['responses'] as List<dynamic>).join('\n'));
     await showDialog(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: const Text('Edit Auto-Reply'),
-          content: SingleChildScrollView(
-            child: Column(children: [
-              Text("App: ${apps[r['package']] ?? r['package']}"),
-              const SizedBox(height: 8),
-              TextFormField(
-                  controller: patternCtrl,
-                  decoration: const InputDecoration(
-                      labelText: 'Pattern', border: OutlineInputBorder())),
-              const SizedBox(height: 8),
-              TextFormField(
-                  controller: responsesCtrl,
-                  minLines: 2,
-                  maxLines: 6,
-                  decoration: const InputDecoration(
-                      labelText: 'Responses (pisah baris)',
-                      border: OutlineInputBorder())),
-            ]),
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Batal')),
-            ElevatedButton(
-              onPressed: () async {
-                final pattern = patternCtrl.text.trim();
-                final responses = responsesCtrl.text
-                    .split('\n')
-                    .map((s) => s.trim())
-                    .where((s) => s.isNotEmpty)
-                    .toList();
-                setState(() {
-                  r['pattern'] = pattern;
-                  r['responses'] = responses;
-                });
-                await _saveRules();
-                Navigator.pop(ctx);
-              },
-              child: const Text('Simpan'),
+        context: context,
+        builder: (ctx) {
+          return AlertDialog(
+            title: const Text('Edit Auto-Reply'),
+            content: SingleChildScrollView(
+              child: Column(children: [
+                Text("App: ${apps[r['package']] ?? r['package']}"),
+                const SizedBox(height: 8),
+                TextFormField(
+                    controller: patternCtrl,
+                    decoration: const InputDecoration(
+                        labelText: 'Pattern', border: OutlineInputBorder())),
+                const SizedBox(height: 8),
+                TextFormField(
+                    controller: responsesCtrl,
+                    minLines: 2,
+                    maxLines: 6,
+                    decoration: const InputDecoration(
+                        labelText: 'Responses (pisah baris)',
+                        border: OutlineInputBorder())),
+              ]),
             ),
-          ],
-        );
-      },
-    );
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Batal')),
+              ElevatedButton(
+                  onPressed: () async {
+                    final pattern = patternCtrl.text.trim();
+                    final responses = responsesCtrl.text
+                        .split('\n')
+                        .map((s) => s.trim())
+                        .where((s) => s.isNotEmpty)
+                        .toList();
+                    setState(() {
+                      r['pattern'] = pattern;
+                      r['responses'] = responses;
+                    });
+                    await _saveRules();
+                    Navigator.pop(ctx);
+                  },
+                  child: const Text('Simpan')),
+            ],
+          );
+        });
   }
 
   Future<void> _deleteRule(Map<String, dynamic> r) async {
@@ -321,27 +332,33 @@ class _XcAutoPageState extends State<XcAutoPage> with TickerProviderStateMixin {
               final r = list[i];
               final responses =
                   (r['responses'] as List<dynamic>).cast<String>();
-              return ListTile(
-                title: Text(r['pattern']?.isEmpty == true
-                    ? "(match semua)"
-                    : r['pattern']),
-                subtitle: Text("Responses: ${responses.join(' | ')}",
-                    maxLines: 2, overflow: TextOverflow.ellipsis),
-                leading: Switch(
-                  value: r['enabled'] == true,
-                  onChanged: (v) {
-                    setState(() => r['enabled'] = v);
-                    _saveRules();
-                  },
+              return Card(
+                margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                color: Colors.blueGrey[50],
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+                child: ListTile(
+                  title: Text(r['pattern']?.isEmpty == true
+                      ? "(match semua)"
+                      : r['pattern']),
+                  subtitle: Text("Responses: ${responses.join(' | ')}",
+                      maxLines: 2, overflow: TextOverflow.ellipsis),
+                  leading: Switch(
+                    value: r['enabled'] == true,
+                    onChanged: (v) {
+                      setState(() => r['enabled'] = v);
+                      _saveRules();
+                    },
+                  ),
+                  trailing: Wrap(children: [
+                    IconButton(
+                        icon: const Icon(Icons.edit),
+                        onPressed: () => _showEditRuleDialog(r)),
+                    IconButton(
+                        icon: const Icon(Icons.delete),
+                        onPressed: () => _deleteRule(r)),
+                  ]),
                 ),
-                trailing: Wrap(children: [
-                  IconButton(
-                      icon: const Icon(Icons.edit),
-                      onPressed: () => _showEditRuleDialog(r)),
-                  IconButton(
-                      icon: const Icon(Icons.delete),
-                      onPressed: () => _deleteRule(r)),
-                ]),
               );
             },
           );
@@ -360,6 +377,8 @@ class _XcAutoPageState extends State<XcAutoPage> with TickerProviderStateMixin {
         return Card(
           margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           color: ok ? Colors.green[50] : Colors.red[50],
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           child: ListTile(
             title: Text("${e['package']} • ${e['timestamp'] ?? ''}",
                 style: const TextStyle(fontSize: 13)),
@@ -391,11 +410,13 @@ class _XcAutoPageState extends State<XcAutoPage> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     final packageKeys = apps.keys.toList();
     return Scaffold(
+      backgroundColor: Colors.grey[100],
       appBar: AppBar(
         title: const Text('Auto Reply'),
         backgroundColor: const Color(0xFF4A00E0),
         bottom: TabBar(
             controller: _tabs,
+            indicatorColor: Colors.white,
             tabs: packageKeys.map((k) => Tab(text: apps[k])).toList()),
         actions: [
           IconButton(
@@ -410,8 +431,7 @@ class _XcAutoPageState extends State<XcAutoPage> with TickerProviderStateMixin {
               );
             },
           ),
-          IconButton(
-              icon: const Icon(Icons.delete_sweep), onPressed: _clearLogs),
+          IconButton(icon: const Icon(Icons.delete_sweep), onPressed: _clearLogs),
         ],
       ),
       body: TabBarView(
@@ -432,11 +452,14 @@ class _XcAutoPageState extends State<XcAutoPage> with TickerProviderStateMixin {
                                     fontWeight: FontWeight.bold,
                                     fontSize: 16))),
                         Switch(
+                            activeColor: const Color(0xFF4A00E0),
                             value: enabled,
                             onChanged: (v) async =>
                                 await _setAppEnabled(pkg, v)),
                         const SizedBox(width: 8),
                         ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF4A00E0)),
                             onPressed: () => _showAddRuleDialog(pkg),
                             icon: const Icon(Icons.add),
                             label: const Text('Tambah Rule'))

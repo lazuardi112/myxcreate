@@ -2,7 +2,9 @@
     xmlns:tools="http://schemas.android.com/tools"
     package="com.example.myxcreate">
 
+    <!-- ========================================= -->
     <!-- Permissions -->
+    <!-- ========================================= -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
@@ -11,10 +13,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
-    <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
-        tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE" tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
 
-    <!-- Queries -->
+    <!-- ========================================= -->
+    <!-- Queries untuk package tertentu -->
+    <!-- ========================================= -->
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -24,8 +28,15 @@
             <action android:name="android.intent.action.PROCESS_TEXT" />
             <data android:mimeType="text/plain" />
         </intent>
+        <!-- Spesifik apps WA & Telegram -->
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
+        <package android:name="org.telegram.messenger" />
     </queries>
 
+    <!-- ========================================= -->
+    <!-- Application -->
+    <!-- ========================================= -->
     <application
         android:name="${applicationName}"
         android:label="Xcreate Member"
@@ -61,13 +72,17 @@
             </intent-filter>
         </activity>
 
-        <!-- Foreground service -->
+        <!-- ========================================= -->
+        <!-- Foreground service untuk background task -->
+        <!-- ========================================= -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
             android:foregroundServiceType="dataSync|connectedDevice|mediaProjection"
             android:exported="false" />
 
-        <!-- Notification listener service plugin -->
+        <!-- ========================================= -->
+        <!-- Notification listener service -->
+        <!-- ========================================= -->
         <service
             android:name="notification.listener.service.NotificationListener"
             android:label="Xcreate Notifikasi"
@@ -79,6 +94,22 @@
             </intent-filter>
         </service>
 
+        <!-- ========================================= -->
+        <!-- Accessibility service untuk auto-reply -->
+        <!-- ========================================= -->
+        <service
+            android:name=".MyAccessibilityService"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
+        <!-- Flutter embedding meta -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
