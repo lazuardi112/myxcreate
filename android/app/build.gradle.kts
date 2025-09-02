@@ -10,19 +10,10 @@ android {
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
-    }
-
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_11.toString()
-    }
-
     defaultConfig {
         applicationId = "com.example.myxcreate"
 
-        // ✅ fix minSdk agar cocok google_mobile_ads
+        // Fix minSdk agar cocok dengan google_mobile_ads & WorkManager
         minSdk = 23
         targetSdk = flutter.targetSdkVersion
 
@@ -32,6 +23,15 @@ android {
         multiDexEnabled = true
     }
 
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+
+    kotlinOptions {
+        jvmTarget = "11"
+    }
+
     signingConfigs {
         create("release") {
             storeFile = file("my-release-key.jks")   // path ke keystore
@@ -39,7 +39,6 @@ android {
             keyAlias = "myalias"                     // alias
             keyPassword = "ardigg12"                 // password alias
         }
-        // ❌ jangan buat debug di sini, sudah otomatis dari Flutter
     }
 
     buildTypes {
@@ -53,7 +52,6 @@ android {
             )
         }
         getByName("debug") {
-            // otomatis pakai debug keystore bawaan
             isMinifyEnabled = false
         }
     }
@@ -65,4 +63,17 @@ android {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    implementation("androidx.multidex:multidex:2.0.1")
+    implementation("androidx.core:core-ktx:1.10.1")
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("com.google.android.material:material:1.11.0")
+    
+    // ✅ WorkManager untuk RestartWorker.kt
+    implementation("androidx.work:work-runtime-ktx:2.8.1")
+    
+    // Optional: jika pakai lifecycle atau coroutine
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
 }
