@@ -796,7 +796,7 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
                 ElevatedButton.icon(onPressed: loadInstalledApps, icon: const Icon(Icons.apps), label: const Text('Load Installed Apps'), style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6C22E0), foregroundColor: Colors.white)),
               ]),
               const SizedBox(height: 8),
-              Text('Stream: \${streamRunning ? 'ON' : 'OFF'}'),
+              Text("Stream: ${streamRunning ? 'ON' : 'OFF'}"),
               const SizedBox(height: 6),
               const Text("Tip: Aktifkan 'Request Permission' dan beri Notification Access di Settings."),
             ]),
