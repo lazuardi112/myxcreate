@@ -1,4 +1,3 @@
-// File: android/app/src/main/kotlin/com/example/myxcreate/MyAccessibilityService.kt
 package com.example.myxcreate
 
 import android.accessibilityservice.AccessibilityService
@@ -31,95 +30,66 @@ class MyAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        Log.i(TAG, "AccessibilityService connected (pkg=${applicationContext.packageName})")
+        Log.i(TAG, "AccessibilityService connected")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
 
+        if (event.eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
+            handleNotification(event)
+        }
+    }
+
+    private fun handleNotification(event: AccessibilityEvent) {
         try {
-            if (event.eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
-                val packageName = event.packageName?.toString() ?: ""
+            val packageName = event.packageName?.toString() ?: "unknown"
 
-                // gabungkan semua text dari event.text
-                val textSb = StringBuilder()
-                val texts = event.text
-                if (texts != null) {
-                    for (t in texts) {
-                        if (t != null) textSb.append(t)
+            // gabungkan semua text dari event.text
+            val textSb = StringBuilder()
+            event.text?.forEach { t -> if (t != null) textSb.append(t) }
+
+            // ambil title/body dari Notification jika tersedia
+            var title: String? = null
+            var body: String? = null
+            try {
+                val parcelable = event.parcelableData
+                if (parcelable is Notification) {
+                    val extras: Bundle? = parcelable.extras
+                    title = extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString()
+                    body = extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+                    if (body.isNullOrEmpty()) {
+                        body = extras?.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
+                            ?: extras?.getCharSequence(Notification.EXTRA_SUMMARY_TEXT)?.toString()
                     }
                 }
+            } catch (e: Exception) {
+                Log.w(TAG, "Can't extract Notification: ${e.message}")
+            }
 
-                // coba ambil title/body dari parcelable Notification (jika tersedia)
-                var title: String? = null
-                var body: String? = null
-                try {
-                    val parcelable = event.parcelableData
-                    if (parcelable is Notification) {
-                        val extras: Bundle? = parcelable.extras
-                        if (extras != null) {
-                            // EXTRA_TITLE, EXTRA_TEXT
-                            title = extras.getString(Notification.EXTRA_TITLE)
-                                ?: extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
-                            body = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
-                            // kadang ada bigText/summaryText
-                            if (body.isNullOrEmpty()) {
-                                body = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
-                                    ?: extras.getCharSequence(Notification.EXTRA_SUMMARY_TEXT)?.toString()
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Can't extract Notification parcelable: ${e.message}")
-                }
+            val finalTitle = title ?: "(tanpa judul)"
+            val finalBody = body ?: if (textSb.isNotEmpty()) textSb.toString() else "(kosong)"
+            val timestamp = System.currentTimeMillis()
 
-                val finalTitle = title ?: "(tanpa judul)"
-                val finalBody = when {
-                    !body.isNullOrEmpty() -> body!!
-                    textSb.isNotEmpty() -> textSb.toString()
-                    else -> "(kosong)"
-                }
+            Log.d(TAG, "Notif recv from=$packageName title='$finalTitle' body='$finalBody'")
 
-                val timestamp = System.currentTimeMillis()
+            // save log ke SharedPreferences
+            saveLogToPrefs(finalTitle, finalBody, timestamp, packageName)
 
-                Log.d(TAG, "Notif recv from=$packageName title='$finalTitle' body='$finalBody'")
+            // kirim broadcast supaya Flutter bisa menerima
+            sendBroadcastToFlutter(finalTitle, finalBody, timestamp)
 
-                // read postUrl and optional auth token from Flutter SharedPreferences
-                val postUrl = readPostUrlFromPrefs()
-                val authToken = readAuthTokenFromPrefs()
-
-                // build payload
-                val payload = JSONObject()
-                payload.put("app", packageName)
-                payload.put("title", finalTitle)
-                payload.put("text", finalBody)
-                payload.put("timestamp", timestamp)
-
-                // save to prefs (native log) immediately — THIS now also updates notif_logs (string set) & last_notif_*
-                saveLogToPrefs(finalTitle, finalBody, timestamp, packageName)
-
-                // send broadcast so Dart can optionally listen (action com.example.myxcreate.NOTIF_EVENT)
-                try {
-                    val b = Intent("com.example.myxcreate.NOTIF_EVENT")
-                    b.putExtra("title", finalTitle)
-                    b.putExtra("text", finalBody)
-                    b.putExtra("time", timestamp)
-                    applicationContext.sendBroadcast(b)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed send broadcast: ${e.message}")
-                }
-
-                // Post to server (background)
-                if (!postUrl.isNullOrEmpty()) {
-                    executor.execute {
-                        postJsonWithRetry(postUrl, payload.toString(), authToken)
-                    }
-                } else {
-                    Log.w(TAG, "notif_post_url not configured - skipping POST")
+            // POST ke server jika ada URL
+            val postUrl = readPref("notif_post_url")
+            val authToken = readPref("notif_auth_token")
+            if (!postUrl.isNullOrEmpty()) {
+                executor.execute {
+                    postJsonWithRetry(postUrl, finalTitle, finalBody, timestamp, packageName, authToken)
                 }
             }
+
         } catch (e: Exception) {
-            Log.e(TAG, "Exception onAccessibilityEvent", e)
+            Log.e(TAG, "handleNotification error", e)
         }
     }
 
@@ -136,153 +106,121 @@ class MyAccessibilityService : AccessibilityService() {
         Log.i(TAG, "AccessibilityService destroyed")
     }
 
-    // ---------------- Helper: Read Post URL ----------------
-    private fun readPostUrlFromPrefs(): String? {
-        return try {
-            val prefs = applicationContext.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
-            val candidates = listOf("notif_post_url", "flutter.notif_post_url", "post_url", "flutter.post_url")
-            for (k in candidates) {
-                val v = prefs.getString(k, null)
-                if (!v.isNullOrEmpty()) {
-                    Log.d(TAG, "Found postUrl using key='$k'")
-                    return v
-                }
-            }
-            null
+    // ================== Helpers ==================
+
+    private fun sendBroadcastToFlutter(title: String, text: String, timestamp: Long) {
+        try {
+            val intent = Intent("com.example.myxcreate.NOTIF_EVENT")
+            intent.putExtra("title", title)
+            intent.putExtra("text", text)
+            intent.putExtra("time", timestamp)
+            applicationContext.sendBroadcast(intent)
         } catch (e: Exception) {
-            Log.e(TAG, "readPostUrlFromPrefs error: ${e.message}")
+            Log.w(TAG, "Failed send broadcast: ${e.message}")
+        }
+    }
+
+    private fun readPref(key: String): String? {
+        return try {
+            val prefs = applicationContext.getSharedPreferences(
+                "FlutterSharedPreferences",
+                Context.MODE_PRIVATE
+            )
+            prefs.getString(key, null)
+        } catch (e: Exception) {
             null
         }
     }
 
-    // ---------------- Helper: Read Auth Token (optional) ----------------
-    private fun readAuthTokenFromPrefs(): String? {
-        return try {
-            val prefs = applicationContext.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
-            val candidates = listOf("notif_auth_token", "flutter.notif_auth_token", "auth_token", "flutter.auth_token")
-            for (k in candidates) {
-                val v = prefs.getString(k, null)
-                if (!v.isNullOrEmpty()) {
-                    Log.d(TAG, "Found auth token using key='$k'")
-                    return v
-                }
-            }
-            null
-        } catch (e: Exception) {
-            Log.e(TAG, "readAuthTokenFromPrefs error: ${e.message}")
-            null
-        }
-    }
-
-    // ---------------- Helper: Save Log to SharedPreferences (native & compatible with Flutter) ----------------
     private fun saveLogToPrefs(title: String, text: String, timestamp: Long, packageName: String) {
         try {
-            val prefs = applicationContext.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+            val prefs = applicationContext.getSharedPreferences(
+                "FlutterSharedPreferences",
+                Context.MODE_PRIVATE
+            )
 
-            // --- 1) notif_logs_native as JSON array string (keamanan urutan & mudah parsing) ---
-            val existingJson = prefs.getString("notif_logs_native", null)
-            val arr = if (!existingJson.isNullOrEmpty()) {
-                try {
-                    JSONArray(existingJson)
-                } catch (e: Exception) {
-                    JSONArray()
-                }
-            } else {
+            // 1) notif_logs_native (JSONArray)
+            val existingJson = prefs.getString("notif_logs_native", "[]")
+            val arr = try {
+                JSONArray(existingJson)
+            } catch (e: Exception) {
                 JSONArray()
             }
 
-            val entry = JSONObject()
-            entry.put("app", packageName)
-            entry.put("title", title)
-            entry.put("text", text)
-            entry.put("time", timestamp)
-
-            // insert at start (most recent first)
-            val newArr = JSONArray()
-            newArr.put(entry)
-            for (i in 0 until arr.length()) {
-                newArr.put(arr.get(i))
+            val entry = JSONObject().apply {
+                put("app", packageName)
+                put("title", title)
+                put("text", text)
+                put("time", timestamp)
             }
 
-            // keep up to 1000 entries
+            val newArr = JSONArray().apply {
+                put(entry)
+                for (i in 0 until arr.length()) put(arr.get(i))
+            }
+
             val max = 1000
             val trimmed = JSONArray()
-            for (i in 0 until Math.min(newArr.length(), max)) {
-                trimmed.put(newArr.get(i))
-            }
+            for (i in 0 until Math.min(newArr.length(), max)) trimmed.put(newArr.get(i))
 
             prefs.edit().putString("notif_logs_native", trimmed.toString()).apply()
 
-            // --- 2) notif_logs as StringSet for Flutter getStringList compatibility ---
-            // Flutter's SharedPreferences on Android maps stringList -> Set<String> under the hood.
-            // We'll maintain a LinkedHashSet to help preserve insertion order.
-            val existingSet = prefs.getStringSet("notif_logs", null)
-            val list = ArrayList<String>()
-
-            // Convert existing set -> list (if present). Note: set may not guarantee order, but usually works.
-            if (existingSet != null) {
-                // try to preserve previous order by adding all; if it was a LinkedHashSet before, order kept.
-                for (s in existingSet) list.add(s)
-            }
-
-            // new log entry as JSON string (same as above)
-            val logJsonString = entry.toString()
-
-            // Insert at beginning
-            list.add(0, logJsonString)
-
-            // Trim to max
-            if (list.size > max) {
-                while (list.size > max) {
-                    list.removeAt(list.size - 1)
-                }
-            }
-
-            // Convert back to LinkedHashSet to preserve insertion order
+            // 2) notif_logs as LinkedHashSet untuk Flutter
+            val existingSet = prefs.getStringSet("notif_logs", LinkedHashSet<String>())!!
             val newSet = LinkedHashSet<String>()
-            for (s in list) newSet.add(s)
-
+            newSet.add(entry.toString())
+            newSet.addAll(existingSet)
+            while (newSet.size > max) {
+                val it = newSet.iterator()
+                if (it.hasNext()) it.next(); it.remove()
+            }
             prefs.edit().putStringSet("notif_logs", newSet).apply()
 
-            // --- 3) also update last_notif_title & last_notif_text for quick access ---
-            prefs.edit().putString("last_notif_title", title).putString("last_notif_text", text).apply()
+            // 3) last_notif_title & last_notif_text
+            prefs.edit().putString("last_notif_title", title)
+            prefs.edit().putString("last_notif_text", text).apply()
 
-            Log.d(TAG, "Saved native log (total=${trimmed.length()}) and updated notif_logs (size=${newSet.size})")
         } catch (e: Exception) {
             Log.e(TAG, "saveLogToPrefs error", e)
         }
     }
 
-    // ---------------- Helper: POST JSON with retry ----------------
-    private fun postJsonWithRetry(endpoint: String, jsonBody: String, authToken: String?) {
+    private fun postJsonWithRetry(
+        urlStr: String,
+        title: String,
+        text: String,
+        timestamp: Long,
+        packageName: String,
+        authToken: String?
+    ) {
         var attempt = 0
         var backoff = BASE_BACKOFF_MS
         while (attempt < MAX_RETRIES) {
             attempt++
             try {
-                val code = postJson(endpoint, jsonBody, authToken)
-                Log.i(TAG, "POST attempt #$attempt to $endpoint -> HTTP $code")
-                if (code in 200..299) {
-                    // success
-                    return
-                } else {
-                    Log.w(TAG, "Non-2xx response: $code")
-                }
+                val code = postJson(urlStr, title, text, timestamp, packageName, authToken)
+                Log.i(TAG, "POST attempt #$attempt -> HTTP $code")
+                if (code in 200..299) return
             } catch (e: Exception) {
                 Log.e(TAG, "POST attempt #$attempt failed: ${e.message}")
             }
-
             try { Thread.sleep(backoff) } catch (ignored: InterruptedException) {}
             backoff *= 2
         }
-        Log.e(TAG, "POST failed after $MAX_RETRIES attempts to $endpoint")
+        Log.e(TAG, "POST failed after $MAX_RETRIES attempts to $urlStr")
     }
 
-    // ---------------- Helper: actual POST ----------------
-    private fun postJson(endpoint: String, jsonBody: String, authToken: String?): Int {
+    private fun postJson(
+        urlStr: String,
+        title: String,
+        text: String,
+        timestamp: Long,
+        packageName: String,
+        authToken: String?
+    ): Int {
         var conn: HttpURLConnection? = null
         return try {
-            val url = URL(endpoint)
+            val url = URL(urlStr)
             conn = (url.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 15000
                 readTimeout = 15000
@@ -291,14 +229,18 @@ class MyAccessibilityService : AccessibilityService() {
                 setRequestProperty("Content-Type", "application/json; utf-8")
                 setRequestProperty("Accept", "application/json")
                 setRequestProperty("User-Agent", "MyXCreate-AccessibilityService/${Build.VERSION.SDK_INT}")
-                if (!authToken.isNullOrEmpty()) {
-                    setRequestProperty("Authorization", authToken)
-                }
+                if (!authToken.isNullOrEmpty()) setRequestProperty("Authorization", authToken)
+            }
+
+            val payload = JSONObject().apply {
+                put("app", packageName)
+                put("title", title)
+                put("text", text)
+                put("timestamp", timestamp)
             }
 
             val out: OutputStream = BufferedOutputStream(conn.outputStream)
-            val bytes = jsonBody.toByteArray(StandardCharsets.UTF_8)
-            out.write(bytes)
+            out.write(payload.toString().toByteArray(StandardCharsets.UTF_8))
             out.flush()
             out.close()
 
