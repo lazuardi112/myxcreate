@@ -1,6 +1,6 @@
+// lib/main.dart
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
@@ -9,6 +9,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:http/http.dart' as http;
 import 'package:app_links/app_links.dart';
+
+// Foreground task & helper (untuk memastikan service hidup di background)
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 // Halaman-halaman
@@ -27,18 +29,21 @@ import 'store/store.dart';
 import 'xcode_edit/xcodeedit.dart';
 import 'web.dart';
 
+// IMPORT startCallback dari home_menu agar kita bisa menggunakan callback yang sama
+// Pastikan file ini ada dan memiliki top-level startCallback (seperti pada contoh sebelumnya).
+import 'menu_xcapp/home_menu.dart' show startCallback;
+
 /// API Cek Versi
 const String apiUrl = "https://api.xcreate.my.id/myxcreate/cek_update_apk.php";
 
 /// Global navigator key agar bisa navigasi dari mana saja
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-/// --- MAIN ---
 Future<void> main() async {
   WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
 
-  // Inisialisasi port komunikasi dengan TaskHandler
-  FlutterForegroundTask.initCommunicationPort();
+  // INIT ForegroundTask sedini mungkin supaya plugin siap ketika kita mau start service
+  _initForegroundTaskGlobal();
 
   if (kIsWeb) {
     runApp(const MaterialApp(
@@ -48,6 +53,7 @@ Future<void> main() async {
     return;
   }
 
+  // Splash bawaan flutter_native_splash
   FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
 
   Widget initialPage = const LoginPage();
@@ -59,10 +65,88 @@ Future<void> main() async {
 
   runApp(MyApp(initialPage: initialPage));
 
+  // Setelah app dijalankan, coba jalankan foreground service jika flag stream sebelumnya aktif.
+  // Tidak men-block UI.
+  _ensureForegroundServiceRunningIfNeeded();
+
   FlutterNativeSplash.remove();
 }
 
-/// --- CEK LOGIN & VERSI ---
+/// Inisialisasi global untuk flutter_foreground_task
+void _initForegroundTaskGlobal() {
+  try {
+    FlutterForegroundTask.init(
+      androidNotificationOptions: AndroidNotificationOptions(
+        channelId: 'xcapp_channel',
+        channelName: 'Xcapp Foreground Service',
+        channelDescription: 'Menjaga listener notifikasi tetap hidup',
+        channelImportance: NotificationChannelImportance.DEFAULT,
+        priority: NotificationPriority.LOW,
+        onlyAlertOnce: true,
+      ),
+      iosNotificationOptions: const IOSNotificationOptions(
+        showNotification: true,
+        playSound: false,
+      ),
+      foregroundTaskOptions: ForegroundTaskOptions(
+        // eventAction repeat tiap 10 detik (ms)
+        eventAction: ForegroundTaskEventAction.repeat(10000),
+        // bantu restart service saat boot / update package
+        autoRunOnBoot: true,
+        autoRunOnMyPackageReplaced: true,
+        allowWakeLock: true,
+        allowWifiLock: true,
+      ),
+    );
+  } catch (e) {
+    debugPrint("Gagal init FlutterForegroundTask: $e");
+  }
+}
+
+/// Jika sebelumnya user mengaktifkan stream (notif_stream_running == true),
+/// maka coba jalankan foreground service agar proses tetap hidup dan MyTaskHandler dapat mem-post.
+Future<void> _ensureForegroundServiceRunningIfNeeded() async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final shouldRun = prefs.getBool('notif_stream_running') ?? false;
+    if (!shouldRun) return;
+
+    final isRunning = await FlutterForegroundTask.isRunningService;
+    if (isRunning == true) {
+      debugPrint('[FG] Service already running (no action).');
+      return;
+    }
+
+    // Jika ada postUrl simpan ke data FG task agar handler punya URL saat start
+    final postUrl = prefs.getString('notif_post_url') ?? '';
+    if (postUrl.isNotEmpty) {
+      try {
+        await FlutterForegroundTask.saveData(key: 'postUrl', value: postUrl);
+      } catch (e) {
+        debugPrint('[FG] Gagal saveData postUrl sebelum start: $e');
+      }
+    }
+
+    // Start the foreground service with callback (callback harus top-level: startCallback)
+    await FlutterForegroundTask.startService(
+      serviceId: 199,
+      notificationTitle: 'Xcapp Notif Listener',
+      notificationText: 'Mendengarkan notifikasi...',
+      notificationIcon: null,
+      notificationButtons: [
+        const NotificationButton(id: 'btn_stop', text: 'Stop'),
+      ],
+      notificationInitialRoute: '/',
+      callback: startCallback, // fungsi ini diimport dari menu_xcapp/home_menu.dart
+    );
+
+    debugPrint('[FG] Foreground service started by main (auto-start).');
+  } catch (e) {
+    debugPrint('[FG] Failed to ensure FG service: $e');
+  }
+}
+
+/// Cek login & versi
 Future<Widget> _checkLoginAndVersion() async {
   final prefs = await SharedPreferences.getInstance();
   final packageInfo = await PackageInfo.fromPlatform();
@@ -75,11 +159,16 @@ Future<Widget> _checkLoginAndVersion() async {
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
       final latestVersion = (data['versi'] ?? "").toString();
-      final changelog = (data['changelog'] ?? "Tidak ada catatan perubahan.").toString();
-      final tanggalUpdate = (data['tanggalUpdate'] ?? data['tanggal_update'] ?? "-").toString();
-      final downloadUrl = (data['url_apk'] ?? data['url_download'] ?? "").toString();
+      final changelog =
+          (data['changelog'] ?? "Tidak ada catatan perubahan.").toString();
+      final tanggalUpdate =
+          (data['tanggalUpdate'] ?? data['tanggal_update'] ?? "-").toString();
+      final downloadUrl =
+          (data['url_apk'] ?? data['url_download'] ?? "").toString();
 
-      if (latestVersion.isNotEmpty && downloadUrl.isNotEmpty && _isVersionLower(localVersion, latestVersion)) {
+      if (latestVersion.isNotEmpty &&
+          downloadUrl.isNotEmpty &&
+          _isVersionLower(localVersion, latestVersion)) {
         return UpdatePage(
           versi: latestVersion,
           changelog: changelog,
@@ -99,10 +188,15 @@ Future<Widget> _checkLoginAndVersion() async {
   return const LoginPage();
 }
 
+/// Bandingkan versi aplikasi
 bool _isVersionLower(String current, String latest) {
-  final currParts = current.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-  final latestParts = latest.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-  final maxLength = currParts.length > latestParts.length ? currParts.length : latestParts.length;
+  final currParts =
+      current.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+  final latestParts =
+      latest.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+  final maxLength = currParts.length > latestParts.length
+      ? currParts.length
+      : latestParts.length;
 
   while (currParts.length < maxLength) currParts.add(0);
   while (latestParts.length < maxLength) latestParts.add(0);
@@ -114,98 +208,10 @@ bool _isVersionLower(String current, String latest) {
   return false;
 }
 
-/// --- MY APP ---
-class MyApp extends StatefulWidget {
+/// MyApp
+class MyApp extends StatelessWidget {
   final Widget initialPage;
   const MyApp({super.key, required this.initialPage});
-
-  @override
-  State<MyApp> createState() => _MyAppState();
-}
-
-class _MyAppState extends State<MyApp> {
-  @override
-  void initState() {
-    super.initState();
-    // Tambahkan callback untuk menerima data dari TaskHandler
-    FlutterForegroundTask.addTaskDataCallback(_onReceiveTaskData);
-
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await _requestPermissions();
-      _initService();
-      _startForegroundService();
-    });
-  }
-
-  @override
-  void dispose() {
-    FlutterForegroundTask.removeTaskDataCallback(_onReceiveTaskData);
-    super.dispose();
-  }
-
-  void _onReceiveTaskData(Object data) {
-    if (data is Map<String, dynamic>) {
-      final dynamic timestampMillis = data["timestampMillis"];
-      if (timestampMillis != null) {
-        final DateTime timestamp = DateTime.fromMillisecondsSinceEpoch(timestampMillis, isUtc: true);
-        debugPrint('Timestamp from TaskHandler: $timestamp');
-      }
-    }
-  }
-
-  Future<void> _requestPermissions() async {
-    final NotificationPermission permission = await FlutterForegroundTask.checkNotificationPermission();
-    if (permission != NotificationPermission.granted) {
-      await FlutterForegroundTask.requestNotificationPermission();
-    }
-
-    if (Platform.isAndroid) {
-      if (!await FlutterForegroundTask.isIgnoringBatteryOptimizations) {
-        await FlutterForegroundTask.requestIgnoreBatteryOptimization();
-      }
-      if (!await FlutterForegroundTask.canScheduleExactAlarms) {
-        await FlutterForegroundTask.openAlarmsAndRemindersSettings();
-      }
-    }
-  }
-
-  void _initService() {
-    FlutterForegroundTask.init(
-      androidNotificationOptions: AndroidNotificationOptions(
-        channelId: 'foreground_service',
-        channelName: 'Foreground Service',
-        channelDescription: 'Foreground service is running',
-        onlyAlertOnce: true,
-      ),
-      iosNotificationOptions: const IOSNotificationOptions(
-        showNotification: false,
-        playSound: false,
-      ),
-      foregroundTaskOptions: ForegroundTaskOptions(
-        eventAction: ForegroundTaskEventAction.repeat(5000),
-        autoRunOnBoot: true,
-        autoRunOnMyPackageReplaced: true,
-        allowWakeLock: true,
-        allowWifiLock: true,
-      ),
-    );
-  }
-
-  Future<void> _startForegroundService() async {
-    if (await FlutterForegroundTask.isRunningService) {
-      await FlutterForegroundTask.restartService();
-    } else {
-      await FlutterForegroundTask.startService(
-        serviceId: 256,
-        notificationTitle: 'Foreground Service is running',
-        notificationText: 'Tap to return to the app',
-        notificationIcon: null,
-        notificationButtons: [const NotificationButton(id: 'btn_hello', text: 'Hello')],
-        notificationInitialRoute: '/',
-        callback: startCallback,
-      );
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -222,26 +228,27 @@ class _MyAppState extends State<MyApp> {
           elevation: 0,
         ),
       ),
-      home: DeepLinkWrapper(initialPage: widget.initialPage),
+      home: DeepLinkWrapper(initialPage: initialPage),
       routes: {
-        '/main': (_) => const MainPage(),
-        '/dashboard': (_) => const DashboardPembayaranPage(),
-        '/riwayat_transfer': (_) => const RiwayatTransferPage(),
-        '/login': (_) => const LoginPage(),
-        '/tambah_pembayaran_pg': (_) => const PembayaranServicePage(),
-        '/atur_koneksi_pg': (_) => const KoneksiPgPage(),
-        '/koneksi_transfer_saldo': (_) => const KoneksiTransferSaldoPage(),
-        '/upload_produk': (_) => const UploadProdukPage(),
-        '/store': (_) => const StorePage(),
-        '/xcedit': (_) => XcodeEditPage(),
-        '/riwayat_midtrans': (_) => RiwayatMidtransPage(),
-        '/koneksi_midtrans': (_) => KoneksiMidtransPage(),
+        '/main': (context) => const MainPage(),
+        '/dashboard': (context) => const DashboardPembayaranPage(),
+        '/riwayat_transfer': (context) => const RiwayatTransferPage(),
+        '/login': (context) => const LoginPage(),
+        '/tambah_pembayaran_pg': (context) => const PembayaranServicePage(),
+        '/atur_koneksi_pg': (context) => const KoneksiPgPage(),
+        '/koneksi_transfer_saldo': (context) =>
+            const KoneksiTransferSaldoPage(),
+        '/upload_produk': (context) => const UploadProdukPage(),
+        '/store': (context) => const StorePage(),
+        '/xcedit': (context) => XcodeEditPage(),
+        '/riwayat_midtrans': (context) => RiwayatMidtransPage(),
+        '/koneksi_midtrans': (context) => KoneksiMidtransPage(),
       },
     );
   }
 }
 
-/// --- DEEP LINK WRAPPER ---
+/// Wrapper untuk handle deep link
 class DeepLinkWrapper extends StatefulWidget {
   final Widget initialPage;
   const DeepLinkWrapper({super.key, required this.initialPage});
@@ -252,12 +259,13 @@ class DeepLinkWrapper extends StatefulWidget {
 
 class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
   late final AppLinks _appLinks;
-  Uri? _pendingUri;
+  Uri? _pendingUri; // simpan URI yang masuk pertama kali
 
   @override
   void initState() {
     super.initState();
     _appLinks = AppLinks();
+
     _initUri();
 
     _appLinks.uriLinkStream.listen((uri) {
@@ -279,7 +287,11 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
       final idProduk = uri.queryParameters['idproduk'];
       if (idProduk != null) {
         navigatorKey.currentState?.pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => DetailPage(idProduk: idProduk)),
+          MaterialPageRoute(
+            builder: (_) => DetailPage(
+              idProduk: idProduk,
+            ),
+          ),
           (route) => false,
         );
       }
@@ -288,15 +300,20 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
 
   @override
   Widget build(BuildContext context) {
+    // jika ada deep link masuk pertama kali → langsung ke DetailPage
     if (_pendingUri != null && _pendingUri!.host == "xcreate.my.id") {
       final idProduk = _pendingUri!.queryParameters['idproduk'];
-      if (idProduk != null) return DetailPage(idProduk: idProduk);
+      if (idProduk != null) {
+        return DetailPage(idProduk: idProduk);
+      }
     }
+
+    // jika tidak ada deep link → lanjut ke splash normal
     return CustomSplashPage(nextPage: widget.initialPage);
   }
 }
 
-/// --- SPLASH ---
+/// Splash Kustom
 class CustomSplashPage extends StatefulWidget {
   final Widget nextPage;
   const CustomSplashPage({super.key, required this.nextPage});
@@ -338,36 +355,5 @@ class _CustomSplashPageState extends State<CustomSplashPage> {
         ),
       ),
     );
-  }
-}
-
-/// --- FOREGROUND TASK HANDLER ---
-@pragma('vm:entry-point')
-void startCallback() {
-  FlutterForegroundTask.setTaskHandler(MyTaskHandler());
-}
-
-class MyTaskHandler extends TaskHandler {
-  @override
-  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
-    debugPrint('Foreground Task Started');
-  }
-
-  @override
-  void onRepeatEvent(DateTime timestamp) {
-    final Map<String, dynamic> data = {
-      "timestampMillis": timestamp.millisecondsSinceEpoch,
-    };
-    FlutterForegroundTask.sendDataToMain(data);
-  }
-
-  @override
-  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
-    debugPrint('Foreground Task Destroyed');
-  }
-
-  @override
-  void onReceiveData(Object data) {
-    debugPrint('Data received in TaskHandler: $data');
   }
 }
