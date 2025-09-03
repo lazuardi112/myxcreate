@@ -13,7 +13,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
-    <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE" tools:ignore="ProtectedPermissions" />
+
+    <!-- Listener & Accessibility permissions -->
+    <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+        tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
 
     <!-- ========================================= -->
@@ -28,6 +31,7 @@
             <action android:name="android.intent.action.PROCESS_TEXT" />
             <data android:mimeType="text/plain" />
         </intent>
+
         <!-- Spesifik apps WA & Telegram -->
         <package android:name="com.whatsapp" />
         <package android:name="com.whatsapp.w4b" />
@@ -45,7 +49,9 @@
         android:usesCleartextTraffic="true"
         tools:replace="android:allowBackup">
 
+        <!-- ========================================= -->
         <!-- MainActivity -->
+        <!-- ========================================= -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -55,15 +61,18 @@
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
 
+            <!-- Tema bawaan Flutter -->
             <meta-data
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme" />
 
+            <!-- Entry point utama -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- Deep link ke https://xcreate.my.id -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -95,12 +104,13 @@
         </service>
 
         <!-- ========================================= -->
-        <!-- Accessibility service untuk auto-reply -->
+        <!-- Accessibility service -->
         <!-- ========================================= -->
         <service
             android:name=".MyAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:exported="false">
+            android:exported="false"
+            android:label="Xcreate Accessibility">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
             </intent-filter>
@@ -109,7 +119,9 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
-        <!-- Flutter embedding meta -->
+        <!-- ========================================= -->
+        <!-- Flutter embedding -->
+        <!-- ========================================= -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
