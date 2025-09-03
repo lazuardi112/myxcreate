@@ -1,5 +1,4 @@
 import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -44,10 +43,7 @@ class _UserNotifPageState extends State<UserNotifPage>
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        title: const Text(
-          "Notifikasi",
-          style: TextStyle(color: Colors.white),
-        ),
+        title: const Text("Notifikasi", style: TextStyle(color: Colors.white)),
         backgroundColor: Colors.black,
         bottom: TabBar(
           controller: _tabController,
@@ -56,7 +52,7 @@ class _UserNotifPageState extends State<UserNotifPage>
           unselectedLabelColor: Colors.grey,
           tabs: const [
             Tab(text: "Terakhir"),
-            Tab(text: "Log"),
+            Tab(text: "Log Lengkap"),
           ],
         ),
       ),
@@ -64,7 +60,7 @@ class _UserNotifPageState extends State<UserNotifPage>
         controller: _tabController,
         children: [
           _buildLastNotif(),
-          _buildLogs(),
+          _buildFullLogs(),
         ],
       ),
     );
@@ -99,13 +95,13 @@ class _UserNotifPageState extends State<UserNotifPage>
     );
   }
 
-  Widget _buildLogs() {
+  Widget _buildFullLogs() {
     return RefreshIndicator(
       onRefresh: _loadPrefs,
       child: ListView(
         padding: const EdgeInsets.all(12),
         children: [
-          const Text("Dari notif_logs_native:",
+          const Text("Dari notif_logs_native (JSON Array):",
               style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           ...nativeLogs.map((e) {
@@ -115,14 +111,17 @@ class _UserNotifPageState extends State<UserNotifPage>
               child: ListTile(
                 title: Text(obj['title'] ?? '',
                     style: const TextStyle(color: Colors.white)),
-                subtitle: Text(obj['text'] ?? '',
-                    style: const TextStyle(color: Colors.white70)),
-                trailing: Text(
-                  DateTime.fromMillisecondsSinceEpoch(obj['time'] ?? 0)
-                      .toLocal()
-                      .toString()
-                      .split('.')[0],
-                  style: const TextStyle(color: Colors.grey),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(obj['text'] ?? '', style: const TextStyle(color: Colors.white70)),
+                    const SizedBox(height: 4),
+                    Text("App: ${obj['app'] ?? ''}", style: const TextStyle(color: Colors.grey)),
+                    Text(
+                      "Timestamp: ${DateTime.fromMillisecondsSinceEpoch(obj['time'] ?? 0).toLocal()}",
+                      style: const TextStyle(color: Colors.grey),
+                    ),
+                  ],
                 ),
               ),
             );
@@ -136,10 +135,19 @@ class _UserNotifPageState extends State<UserNotifPage>
             return Card(
               color: Colors.grey[850],
               child: ListTile(
-                title: Text(obj['title'] ?? '',
-                    style: const TextStyle(color: Colors.white)),
-                subtitle: Text(obj['text'] ?? '',
-                    style: const TextStyle(color: Colors.white70)),
+                title: Text(obj['title'] ?? '', style: const TextStyle(color: Colors.white)),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(obj['text'] ?? '', style: const TextStyle(color: Colors.white70)),
+                    const SizedBox(height: 4),
+                    Text("App: ${obj['app'] ?? ''}", style: const TextStyle(color: Colors.grey)),
+                    Text(
+                      "Timestamp: ${DateTime.fromMillisecondsSinceEpoch(obj['time'] ?? 0).toLocal()}",
+                      style: const TextStyle(color: Colors.grey),
+                    ),
+                  ],
+                ),
               ),
             );
           }).toList(),
