@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
+import 'package:myxcreate/pages/user_notif.dart';
 import 'package:myxcreate/store/detail.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -28,9 +29,6 @@ import 'menu_fitur/upload_produk.dart';
 import 'store/store.dart';
 import 'xcode_edit/xcodeedit.dart';
 import 'web.dart';
-
-// Import startCallback
-import 'menu_xcapp/home_menu.dart' show startCallback;
 
 /// API Cek Versi
 const String apiUrl = "https://api.xcreate.my.id/myxcreate/cek_update_apk.php";
@@ -62,8 +60,10 @@ Future<void> main() async {
 
   runApp(MyApp(initialPage: initialPage));
 
-  // Listen data dari FG Service (MyAccessibilityService)
-  FlutterForegroundTask.receiveBroadcastStream().listen((event) {
+  // Listener data dari Foreground Service
+  FlutterForegroundTask.addTaskDataCallback((event) {
+    if (event == null) return;
+    debugPrint('[Main] Event diterima: $event');
     _handleIncomingNotification(event);
   });
 
@@ -80,7 +80,7 @@ Future<void> _handleIncomingNotification(dynamic event) async {
       final text = event['text']?.toString() ?? '(kosong)';
       final prefs = await SharedPreferences.getInstance();
 
-      // Simpan ke log (list JSON)
+      // Simpan log (versi flutter)
       final logs = prefs.getStringList('notif_logs') ?? [];
       final logEntry = jsonEncode({
         "title": title,
@@ -89,6 +89,16 @@ Future<void> _handleIncomingNotification(dynamic event) async {
       });
       logs.add(logEntry);
       await prefs.setStringList('notif_logs', logs);
+
+      // Simpan log native JSON array
+      final nativeJson = prefs.getString('notif_logs_native') ?? '[]';
+      final List<dynamic> nativeLogs = jsonDecode(nativeJson);
+      nativeLogs.add({
+        "title": title,
+        "text": text,
+        "time": DateTime.now().toIso8601String(),
+      });
+      await prefs.setString('notif_logs_native', jsonEncode(nativeLogs));
 
       // Simpan last notification
       await prefs.setString('last_notif_title', title);
@@ -151,7 +161,7 @@ void _initForegroundTaskGlobal() {
 Future<void> _ensureForegroundServiceRunningIfNeeded() async {
   try {
     final prefs = await SharedPreferences.getInstance();
-    final shouldRun = prefs.getBool('notif_stream_running') ?? false;
+    final shouldRun = prefs.getBool('notif_stream_running') ?? true; // default true
     if (!shouldRun) return;
 
     final isRunning = await FlutterForegroundTask.isRunningService;
@@ -177,7 +187,9 @@ Future<void> _ensureForegroundServiceRunningIfNeeded() async {
         const NotificationButton(id: 'btn_stop', text: 'Stop'),
       ],
       notificationInitialRoute: '/',
-      callback: startCallback,
+      callback: () {
+        debugPrint("[FG] Service callback started");
+      },
     );
 
     debugPrint('[FG] Foreground service started by main (auto-start).');
@@ -283,6 +295,7 @@ class MyApp extends StatelessWidget {
         '/xcedit': (context) => XcodeEditPage(),
         '/riwayat_midtrans': (context) => RiwayatMidtransPage(),
         '/koneksi_midtrans': (context) => KoneksiMidtransPage(),
+        '/user_notif': (context) => UserNotifPage(),
       },
     );
   }
