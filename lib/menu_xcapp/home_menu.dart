@@ -1,3 +1,4 @@
+// lib/menu_xcapp/home_menu.dart
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
@@ -11,7 +12,6 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:http/http.dart' as http;
 import 'package:installed_apps/installed_apps.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
-import 'package:android_intent_plus/android_intent.dart';
 
 // -------------------------- Foreground Task callback (top-level) --------------------------
 // Callback must be top-level and marked so it isn't tree-shaken.
@@ -318,6 +318,43 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
     }
   }
 
+  // ---------------- stream flag and app toggles persistence ----------------
+  Future<void> _loadStreamFlag() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      streamRunning = prefs.getBool('notif_stream_running') ?? false;
+    });
+  }
+
+  Future<void> _saveStreamFlag(bool v) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('notif_stream_running', v);
+    if (mounted) setState(() => streamRunning = v);
+  }
+
+  Future<void> _loadAppToggles() async {
+    final prefs = await SharedPreferences.getInstance();
+    final s = prefs.getString('notif_app_toggles');
+    if (s != null) {
+      final Map<String, dynamic> m = json.decode(s);
+      if (mounted) {
+        setState(() {
+          appToggles = m.map((k, v) => MapEntry(k, v as bool));
+        });
+      } else {
+        appToggles = m.map((k, v) => MapEntry(k, v as bool));
+      }
+    } else {
+      appToggles = {};
+    }
+  }
+
+  Future<void> _saveAppToggles() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('notif_app_toggles', json.encode(appToggles));
+  }
+
   // ---------------- permission & controls ----------------
   Future<void> requestPermission() async {
     try {
@@ -352,13 +389,17 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
     log('isPermissionGranted => $status');
   }
 
-  // Open battery optimization settings to allow user whitelist (helpful for many vendors)
+  // Open app settings (fallback) to allow user whitelist/disable battery optimizations manually
   Future<void> openBatteryOptimizationSettings() async {
     try {
-      final intent = AndroidIntent(action: 'android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS');
-      await intent.launch();
+      final ok = await openAppSettings();
+      if (!ok) {
+        _showSnack('Gagal membuka settings aplikasi. Silakan buka manual pengaturan battery optimization/vendor whitelist.');
+      } else {
+        _showSnack('Buka pengaturan aplikasi. Silakan aktifkan whitelist/ignore battery optimization jika perlu.');
+      }
     } catch (e) {
-      _showSnack('Gagal membuka pengaturan battery optimization: $e');
+      _showSnack('Gagal membuka pengaturan: $e');
     }
   }
 
