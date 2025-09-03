@@ -10,7 +10,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:http/http.dart' as http;
 import 'package:app_links/app_links.dart';
 
-// Foreground task & helper (untuk memastikan service hidup di background)
+// Foreground task
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 // Halaman-halaman
@@ -29,20 +29,18 @@ import 'store/store.dart';
 import 'xcode_edit/xcodeedit.dart';
 import 'web.dart';
 
-// IMPORT startCallback dari home_menu agar kita bisa menggunakan callback yang sama
-// Pastikan file ini ada dan memiliki top-level startCallback (seperti pada contoh sebelumnya).
+// Import startCallback
 import 'menu_xcapp/home_menu.dart' show startCallback;
 
 /// API Cek Versi
 const String apiUrl = "https://api.xcreate.my.id/myxcreate/cek_update_apk.php";
 
-/// Global navigator key agar bisa navigasi dari mana saja
+/// Global navigator key
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
 
-  // INIT ForegroundTask sedini mungkin supaya plugin siap ketika kita mau start service
   _initForegroundTaskGlobal();
 
   if (kIsWeb) {
@@ -53,7 +51,6 @@ Future<void> main() async {
     return;
   }
 
-  // Splash bawaan flutter_native_splash
   FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
 
   Widget initialPage = const LoginPage();
@@ -65,14 +62,63 @@ Future<void> main() async {
 
   runApp(MyApp(initialPage: initialPage));
 
-  // Setelah app dijalankan, coba jalankan foreground service jika flag stream sebelumnya aktif.
-  // Tidak men-block UI.
+  // Listen data dari FG Service (MyAccessibilityService)
+  FlutterForegroundTask.receiveBroadcastStream().listen((event) {
+    _handleIncomingNotification(event);
+  });
+
   _ensureForegroundServiceRunningIfNeeded();
 
   FlutterNativeSplash.remove();
 }
 
-/// Inisialisasi global untuk flutter_foreground_task
+/// Handler untuk setiap notifikasi yang dikirim dari MyAccessibilityService
+Future<void> _handleIncomingNotification(dynamic event) async {
+  try {
+    if (event is Map) {
+      final title = event['title']?.toString() ?? '(tanpa judul)';
+      final text = event['text']?.toString() ?? '(kosong)';
+      final prefs = await SharedPreferences.getInstance();
+
+      // Simpan ke log (list JSON)
+      final logs = prefs.getStringList('notif_logs') ?? [];
+      final logEntry = jsonEncode({
+        "title": title,
+        "text": text,
+        "time": DateTime.now().toIso8601String(),
+      });
+      logs.add(logEntry);
+      await prefs.setStringList('notif_logs', logs);
+
+      // Simpan last notification
+      await prefs.setString('last_notif_title', title);
+      await prefs.setString('last_notif_text', text);
+
+      // Post ke server jika URL tersedia
+      final postUrl = prefs.getString('notif_post_url') ?? '';
+      if (postUrl.isNotEmpty) {
+        try {
+          final res = await http.post(
+            Uri.parse(postUrl),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              "title": title,
+              "text": text,
+              "timestamp": DateTime.now().millisecondsSinceEpoch,
+            }),
+          );
+          debugPrint('[POST] Notif terkirim: ${res.statusCode}');
+        } catch (e) {
+          debugPrint('[POST] Gagal kirim notif: $e');
+        }
+      }
+    }
+  } catch (e) {
+    debugPrint('❌ Error handle incoming notif: $e');
+  }
+}
+
+/// Init Foreground Task
 void _initForegroundTaskGlobal() {
   try {
     FlutterForegroundTask.init(
@@ -89,9 +135,7 @@ void _initForegroundTaskGlobal() {
         playSound: false,
       ),
       foregroundTaskOptions: ForegroundTaskOptions(
-        // eventAction repeat tiap 10 detik (ms)
         eventAction: ForegroundTaskEventAction.repeat(10000),
-        // bantu restart service saat boot / update package
         autoRunOnBoot: true,
         autoRunOnMyPackageReplaced: true,
         allowWakeLock: true,
@@ -103,8 +147,7 @@ void _initForegroundTaskGlobal() {
   }
 }
 
-/// Jika sebelumnya user mengaktifkan stream (notif_stream_running == true),
-/// maka coba jalankan foreground service agar proses tetap hidup dan MyTaskHandler dapat mem-post.
+/// Ensure FG Service running
 Future<void> _ensureForegroundServiceRunningIfNeeded() async {
   try {
     final prefs = await SharedPreferences.getInstance();
@@ -117,7 +160,6 @@ Future<void> _ensureForegroundServiceRunningIfNeeded() async {
       return;
     }
 
-    // Jika ada postUrl simpan ke data FG task agar handler punya URL saat start
     final postUrl = prefs.getString('notif_post_url') ?? '';
     if (postUrl.isNotEmpty) {
       try {
@@ -127,17 +169,15 @@ Future<void> _ensureForegroundServiceRunningIfNeeded() async {
       }
     }
 
-    // Start the foreground service with callback (callback harus top-level: startCallback)
     await FlutterForegroundTask.startService(
       serviceId: 199,
       notificationTitle: 'Xcapp Notif Listener',
       notificationText: 'Mendengarkan notifikasi...',
-      notificationIcon: null,
       notificationButtons: [
         const NotificationButton(id: 'btn_stop', text: 'Stop'),
       ],
       notificationInitialRoute: '/',
-      callback: startCallback, // fungsi ini diimport dari menu_xcapp/home_menu.dart
+      callback: startCallback,
     );
 
     debugPrint('[FG] Foreground service started by main (auto-start).');
@@ -248,7 +288,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
-/// Wrapper untuk handle deep link
+/// DeepLink Wrapper
 class DeepLinkWrapper extends StatefulWidget {
   final Widget initialPage;
   const DeepLinkWrapper({super.key, required this.initialPage});
@@ -259,7 +299,7 @@ class DeepLinkWrapper extends StatefulWidget {
 
 class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
   late final AppLinks _appLinks;
-  Uri? _pendingUri; // simpan URI yang masuk pertama kali
+  Uri? _pendingUri;
 
   @override
   void initState() {
@@ -300,7 +340,6 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
 
   @override
   Widget build(BuildContext context) {
-    // jika ada deep link masuk pertama kali → langsung ke DetailPage
     if (_pendingUri != null && _pendingUri!.host == "xcreate.my.id") {
       final idProduk = _pendingUri!.queryParameters['idproduk'];
       if (idProduk != null) {
@@ -308,12 +347,11 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
       }
     }
 
-    // jika tidak ada deep link → lanjut ke splash normal
     return CustomSplashPage(nextPage: widget.initialPage);
   }
 }
 
-/// Splash Kustom
+/// Custom Splash
 class CustomSplashPage extends StatefulWidget {
   final Widget nextPage;
   const CustomSplashPage({super.key, required this.nextPage});
