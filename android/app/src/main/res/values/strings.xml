@@ -1,17 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- App name (pastikan ada) -->
+    <!-- App name -->
     <string name="app_name">Xcreate Member</string>
 
-    <!-- Accessibility service strings (ditambahkan) -->
+    <!-- Accessibility service strings -->
     <string name="accessibility_service_label">Xcreate Notif Listener</string>
     <string name="accessibility_service_description">
         Layanan ini digunakan untuk membaca notifikasi dan mengirimkan data notifikasi ke server yang Anda tentukan. 
         Aktivasi layanan diperlukan agar aplikasi dapat menerima &amp; mempost notifikasi walaupun aplikasi ditutup.
     </string>
 
-    <!-- Jika Anda ingin menambahkan instruksi singkat untuk user di Settings -->
+    <!-- Instruksi tambahan untuk user -->
     <string name="accessibility_service_instructions">
         Aktifkan Xcreate Notif Listener di Pengaturan → Aksesibilitas agar aplikasi dapat menangkap notifikasi.
     </string>
+
+    <!-- Label untuk Notification Service (fix error manifest) -->
+    <string name="notification_service_label">Notification Listener Service</string>
 </resources>
