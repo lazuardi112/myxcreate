@@ -24,7 +24,7 @@
         Xcreate Notif Accessibility
     </string>
     <string name="accessibility_service_description">
-        Layanan ini digunakan untuk menangkap event aksesibilitas & notifikasi,
+        Layanan ini digunakan untuk menangkap event aksesibilitas dan notifikasi,
         kemudian menyimpan log ke penyimpanan lokal (SharedPreferences) 
         sekaligus mengirimkan data ke server.
         Aktifkan di Pengaturan → Aksesibilitas agar aplikasi tetap berjalan
