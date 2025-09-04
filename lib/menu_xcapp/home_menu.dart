@@ -1,4 +1,4 @@
-// lib/menu_xcapp/home_menu.dart
+// xcapp_page.dart
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
@@ -6,140 +6,14 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:notification_listener_service/notification_event.dart';
-import 'package:notification_listener_service/notification_listener_service.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:http/http.dart' as http;
 import 'package:installed_apps/installed_apps.dart';
-import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
-// -------------------------- Foreground Task callback (top-level) --------------------------
-// Callback must be top-level and marked so it isn't tree-shaken.
-@pragma('vm:entry-point')
-void startCallback() {
-  FlutterForegroundTask.setTaskHandler(MyTaskHandler());
-}
+// ganti: menggunakan accessibility service
+import 'package:flutter_accessibility_service/accessibility_event.dart';
+import 'package:flutter_accessibility_service/flutter_accessibility_service.dart';
 
-class MyTaskHandler extends TaskHandler {
-  Timer? _timer;
-  int _count = 0;
-
-  void _sendHeartbeat() {
-    _count++;
-    FlutterForegroundTask.updateService(
-      notificationTitle: 'Xcapp Notif Listener',
-      notificationText: 'heartbeats: $_count',
-    );
-
-    FlutterForegroundTask.sendDataToMain({
-      'type': 'heartbeat',
-      'count': _count,
-      'time': DateTime.now().toIso8601String()
-    });
-  }
-
-  // Called when the task is started.
-  @override
-  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
-    log('[FG] onStart(starter: ${starter.name})');
-    // keep simple periodic heartbeat
-    _timer = Timer.periodic(const Duration(seconds: 10), (_) => _sendHeartbeat());
-  }
-
-  // Called periodically according to ForegroundTaskOptions.eventAction
-  @override
-  void onRepeatEvent(DateTime timestamp) {
-    _sendHeartbeat();
-  }
-
-  // Called when the task is destroyed.
-  @override
-  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
-    log('[FG] onDestroy(isTimeout: $isTimeout)');
-    _timer?.cancel();
-  }
-
-  @override
-  void onNotificationButtonPressed(String id) {
-    log('[FG] onNotificationButtonPressed: $id');
-    FlutterForegroundTask.sendDataToMain({'type': 'button', 'id': id});
-    if (id == 'btn_stop') {
-      // stop service on button pressed
-      FlutterForegroundTask.stopService();
-    }
-  }
-
-  @override
-  void onNotificationPressed() {
-    log('[FG] onNotificationPressed');
-  }
-
-  @override
-  void onNotificationDismissed() {
-    log('[FG] onNotificationDismissed');
-  }
-
-  // This receives data from main (sendDataToTask)
-  @override
-  void onReceiveData(Object data) {
-    // onReceiveData is synchronous but we can start async work inside
-    Future(() async {
-      try {
-        // data may be Map or String
-        Map<String, dynamic> payload;
-        if (data is String) {
-          payload = jsonDecode(data) as Map<String, dynamic>;
-        } else if (data is Map) {
-          payload = Map<String, dynamic>.from(data);
-        } else {
-          log('[FG] onReceiveData: unsupported data => $data');
-          return;
-        }
-
-        // Ambil postUrl yang disimpan oleh main isolate (task juga dapat baca saved data)
-        final dynamic stored = await FlutterForegroundTask.getData(key: 'postUrl');
-        final String? postUrl = stored?.toString();
-
-        if (postUrl == null || postUrl.isEmpty) {
-          FlutterForegroundTask.sendDataToMain({
-            'type': 'post_result',
-            'ok': false,
-            'message': 'No postUrl configured',
-            'payload': payload
-          });
-          log('[FG] No postUrl configured, dropping payload');
-          return;
-        }
-
-        // prepare body
-        final body = jsonEncode({
-          'app': payload['app'] ?? '',
-          'title': payload['title'] ?? '',
-          'text': payload['text'] ?? '',
-          'timestamp': payload['timestamp'] ?? DateTime.now().toIso8601String(),
-        });
-
-        // attempt POST
-        try {
-          final uri = Uri.tryParse(postUrl);
-          if (uri == null) {
-            FlutterForegroundTask.sendDataToMain({'type': 'post_result', 'ok': false, 'message': 'Invalid postUrl', 'postUrl': postUrl});
-            return;
-          }
-          final resp = await http.post(uri, body: body, headers: {'Content-Type': 'application/json'}).timeout(const Duration(seconds: 15));
-          final ok = resp.statusCode >= 200 && resp.statusCode < 300;
-          FlutterForegroundTask.sendDataToMain({'type': 'post_result', 'ok': ok, 'code': resp.statusCode, 'body': resp.body, 'payload': payload});
-        } catch (e) {
-          FlutterForegroundTask.sendDataToMain({'type': 'post_result', 'ok': false, 'message': e.toString(), 'payload': payload});
-        }
-      } catch (e) {
-        log('[FG] Exception in onReceiveData async: $e');
-      }
-    });
-  }
-}
-
-// -------------------------- XcappPage (UI) --------------------------
 class XcappPage extends StatefulWidget {
   const XcappPage({super.key});
 
@@ -147,10 +21,11 @@ class XcappPage extends StatefulWidget {
   State<XcappPage> createState() => _XcappPageState();
 }
 
-class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMixin {
-  String username = 'User';
-  StreamSubscription<ServiceNotificationEvent>? _subscription;
-  List<ServiceNotificationEvent> events = [];
+class _XcappPageState extends State<XcappPage>
+    with SingleTickerProviderStateMixin {
+  String username = "User";
+  StreamSubscription<AccessibilityEvent?>? _subscription;
+  List<AccessibilityEvent?> events = [];
 
   late TabController _tabController;
 
@@ -161,65 +36,18 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
   bool streamRunning = false;
   bool loadingApps = false;
 
-  // persisted lists
-  List<Map<String, dynamic>> savedNotifications = [];
-  List<Map<String, dynamic>> postLogs = [];
+  // auto response rules (rule hanya mencatat / post; tidak melakukan sendReply)
+  List<Map<String, dynamic>> autoRules = []; // {id, package, pattern, responses[], enabled}
 
-  // Foreground task data listener
-  final ValueNotifier<Object?> _taskData = ValueNotifier(null);
-
-  // controllers
-  late final TextEditingController _postUrlController;
+  // logs
+  List<Map<String, dynamic>> notifLogs = []; // {id, app, title, text, timestamp}
+  List<Map<String, dynamic>> postLogs = []; // {id, url, body, code, response, timestamp}
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
-    _postUrlController = TextEditingController();
-
-    // Receive data from TaskHandler via callback registration
-    FlutterForegroundTask.addTaskDataCallback(_onReceiveTaskData);
-
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      // initialize FlutterForegroundTask (notification/channel/options)
-      _initForegroundTaskDefault();
-    });
-
-    // load persisted settings
+    _tabController = TabController(length: 5, vsync: this);
     _loadAllSettings();
-  }
-
-  @override
-  void dispose() {
-    _subscription?.cancel();
-    FlutterForegroundTask.removeTaskDataCallback(_onReceiveTaskData);
-    _tabController.dispose();
-    _postUrlController.dispose();
-    super.dispose();
-  }
-
-  void _onReceiveTaskData(Object? data) {
-    _taskData.value = data;
-    log('[UI] Received from FG task: $data');
-
-    // react to post results to keep UI logs
-    if (data is Map) {
-      final t = data['type'];
-      if (t == 'post_result') {
-        final Map<String, dynamic> l = {
-          'time': DateTime.now().toIso8601String(),
-          'package': (data['payload']?['app']) ?? '',
-          'title': (data['payload']?['title']) ?? '',
-          'success': data['ok'] == true,
-          'code': data['code'] ?? 0,
-          'message': data['body'] ?? data['message'] ?? '',
-        };
-        postLogs.insert(0, l);
-        if (postLogs.length > 1000) postLogs = postLogs.sublist(0, 1000);
-        _savePostLogs();
-        if (mounted) setState(() {});
-      }
-    }
   }
 
   Future<void> _loadAllSettings() async {
@@ -227,101 +55,36 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
     await _loadPostUrl();
     await _loadStreamFlag();
     await _loadAppToggles();
-    await _loadSavedNotifications();
-    await _loadPostLogs();
-
+    await _loadAutoRules();
+    await _loadLogs();
     if (streamRunning) {
       startStream();
     }
   }
 
-  // ---------------- persistence helpers ----------------
-  Future<void> _loadSavedNotifications() async {
-    final prefs = await SharedPreferences.getInstance();
-    final s = prefs.getString('saved_notifications');
-    if (s != null) {
-      final List<dynamic> list = json.decode(s);
-      savedNotifications = list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
-    } else {
-      savedNotifications = [];
-    }
-  }
-
-  Future<void> _saveNotificationsToPrefs() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('saved_notifications', json.encode(savedNotifications));
-  }
-
-  Future<void> _loadPostLogs() async {
-    final prefs = await SharedPreferences.getInstance();
-    final s = prefs.getString('post_logs');
-    if (s != null) {
-      final List<dynamic> list = json.decode(s);
-      postLogs = list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
-    } else {
-      postLogs = [];
-    }
-  }
-
-  Future<void> _savePostLogs() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('post_logs', json.encode(postLogs));
-  }
-
+  // -------------------- SharedPreferences helpers --------------------
   Future<void> loadUsername() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (!mounted) return;
+    SharedPreferences prefs = await SharedPreferences.getInstance();
     setState(() {
-      username = prefs.getString('username') ?? 'User';
+      username = prefs.getString('username') ?? "User";
     });
   }
 
   Future<void> _loadPostUrl() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final loaded = prefs.getString('notif_post_url') ?? '';
-      postUrl = loaded;
-      _postUrlController.text = postUrl;
-
-      // Simpan juga ke Foreground Task (jika service jalan, task bisa baca)
-      if (postUrl.isNotEmpty) {
-        try {
-          await FlutterForegroundTask.saveData(key: 'postUrl', value: postUrl);
-        } catch (e) {
-          debugPrint('Gagal saveData ke ForegroundTask: $e');
-        }
-      }
-
-      if (mounted) setState(() {});
-    } catch (e) {
-      debugPrint('Error loadPostUrl: $e');
-    }
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      postUrl = prefs.getString('notif_post_url') ?? '';
+    });
   }
 
   Future<void> _savePostUrl(String url) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('notif_post_url', url);
-      postUrl = url;
-      _postUrlController.text = url;
-
-      // Simpan juga ke Foreground Task supaya BG handler tahu URL terbaru
-      try {
-        await FlutterForegroundTask.saveData(key: 'postUrl', value: url);
-      } catch (e) {
-        debugPrint('Gagal saveData ke ForegroundTask: $e');
-      }
-
-      if (mounted) setState(() {});
-    } catch (e) {
-      debugPrint('Error savePostUrl: $e');
-    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('notif_post_url', url);
+    setState(() => postUrl = url);
   }
 
-  // ---------------- stream flag and app toggles persistence ----------------
   Future<void> _loadStreamFlag() async {
     final prefs = await SharedPreferences.getInstance();
-    if (!mounted) return;
     setState(() {
       streamRunning = prefs.getBool('notif_stream_running') ?? false;
     });
@@ -330,20 +93,20 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
   Future<void> _saveStreamFlag(bool v) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('notif_stream_running', v);
-    if (mounted) setState(() => streamRunning = v);
+    setState(() => streamRunning = v);
   }
 
   Future<void> _loadAppToggles() async {
     final prefs = await SharedPreferences.getInstance();
     final s = prefs.getString('notif_app_toggles');
     if (s != null) {
-      final Map<String, dynamic> m = json.decode(s);
-      if (mounted) {
+      try {
+        final Map<String, dynamic> m = json.decode(s);
         setState(() {
           appToggles = m.map((k, v) => MapEntry(k, v as bool));
         });
-      } else {
-        appToggles = m.map((k, v) => MapEntry(k, v as bool));
+      } catch (e) {
+        appToggles = {};
       }
     } else {
       appToggles = {};
@@ -355,271 +118,220 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
     await prefs.setString('notif_app_toggles', json.encode(appToggles));
   }
 
-  // ---------------- permission & controls ----------------
-  Future<void> requestPermission() async {
-    try {
-      final NotificationPermission notificationPermission = await FlutterForegroundTask.checkNotificationPermission();
-      if (notificationPermission != NotificationPermission.granted) {
-        await FlutterForegroundTask.requestNotificationPermission();
+  Future<void> _loadAutoRules() async {
+    final prefs = await SharedPreferences.getInstance();
+    final s = prefs.getString('auto_response_rules');
+    if (s != null) {
+      try {
+        final List<dynamic> arr = json.decode(s);
+        setState(() {
+          autoRules = arr.cast<Map<String, dynamic>>();
+        });
+      } catch (e) {
+        autoRules = [];
       }
-    } catch (_) {}
+    } else {
+      autoRules = [];
+    }
+  }
 
+  Future<void> _saveAutoRules() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('auto_response_rules', json.encode(autoRules));
+  }
+
+  Future<void> _loadLogs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final s1 = prefs.getString('notif_logs');
+    final s2 = prefs.getString('post_logs');
+    if (s1 != null) {
+      try {
+        final List<dynamic> arr = json.decode(s1);
+        notifLogs = arr.cast<Map<String, dynamic>>();
+      } catch (_) {
+        notifLogs = [];
+      }
+    } else {
+      notifLogs = [];
+    }
+    if (s2 != null) {
+      try {
+        final List<dynamic> arr = json.decode(s2);
+        postLogs = arr.cast<Map<String, dynamic>>();
+      } catch (_) {
+        postLogs = [];
+      }
+    } else {
+      postLogs = [];
+    }
+    setState(() {});
+  }
+
+  Future<void> _saveNotifLogs() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('notif_logs', json.encode(notifLogs));
+  }
+
+  Future<void> _savePostLogs() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('post_logs', json.encode(postLogs));
+  }
+
+  // -------------------- Permission handling --------------------
+  Future<void> requestPermission() async {
+    // Android 13 runtime notifications permission (masih relevan jika butuh notifikasi lokal)
     if (await Permission.notification.isDenied) {
       final res = await Permission.notification.request();
       final ok = res.isGranted;
-      _showSnack(ok ? 'Permission notifikasi diberikan' : 'Permission notifikasi ditolak');
-      log('Notification permission granted? $ok');
+      _showSnack(ok ? "Permission notifikasi diberikan" : "Permission notifikasi ditolak");
+      log("Notification permission granted? $ok");
     } else {
-      _showSnack('Permission notifikasi sudah aktif');
+      _showSnack("Permission notifikasi sudah aktif");
     }
 
-    // Also request NotificationListener special access
-    try {
-      final granted = await NotificationListenerService.requestPermission();
-      _showSnack(granted ? 'Akses notifikasi diaktifkan' : 'Akses notifikasi belum diaktifkan');
-      log('NotificationListenerService.requestPermission() => $granted');
-    } catch (e) {
-      log('Error requesting NotificationListener permission: $e');
-    }
+    // Request Accessibility permission (akan membuka settings)
+    final granted =
+        await FlutterAccessibilityService.requestAccessibilityPermission();
+    _showSnack(granted ? "Akses accessibility diaktifkan" : "Akses accessibility belum diaktifkan");
+    log("FlutterAccessibilityService.requestAccessibilityPermission() => $granted");
   }
 
   Future<void> checkPermission() async {
-    final status = await NotificationListenerService.isPermissionGranted();
-    _showSnack(status ? 'Akses notifikasi aktif' : 'Akses notifikasi TIDAK aktif');
-    log('isPermissionGranted => $status');
+    final status = await FlutterAccessibilityService.isAccessibilityPermissionEnabled();
+    _showSnack(status ? "Akses accessibility aktif" : "Akses accessibility TIDAK aktif");
+    log("isAccessibilityPermissionEnabled => $status");
   }
 
-  // Open app settings (fallback) to allow user whitelist/disable battery optimizations manually
-  Future<void> openBatteryOptimizationSettings() async {
-    try {
-      final ok = await openAppSettings();
-      if (!ok) {
-        _showSnack('Gagal membuka settings aplikasi. Silakan buka manual pengaturan battery optimization/vendor whitelist.');
-      } else {
-        _showSnack('Buka pengaturan aplikasi. Silakan aktifkan whitelist/ignore battery optimization jika perlu.');
-      }
-    } catch (e) {
-      _showSnack('Gagal membuka pengaturan: $e');
-    }
-  }
-
-  // ---------------- init FG task ----------------
-  void _initForegroundTaskDefault() {
-    FlutterForegroundTask.init(
-      androidNotificationOptions: AndroidNotificationOptions(
-        channelId: 'xcapp_channel',
-        channelName: 'Xcapp Foreground Service',
-        channelDescription: 'Menjaga listener notifikasi tetap hidup',
-        channelImportance: NotificationChannelImportance.DEFAULT,
-        priority: NotificationPriority.LOW,
-        onlyAlertOnce: true,
-      ),
-      iosNotificationOptions: const IOSNotificationOptions(
-        showNotification: true,
-        playSound: false,
-      ),
-      foregroundTaskOptions: ForegroundTaskOptions(
-        // eventAction repeat tiap 10 detik (ms)
-        eventAction: ForegroundTaskEventAction.repeat(10000), // 10s
-        // penting: aktifkan autoRunOnBoot & MyPackageReplaced agar service dapat restart
-        autoRunOnBoot: true,
-        autoRunOnMyPackageReplaced: true,
-        allowWakeLock: true,
-        allowWifiLock: true,
-      ),
-    );
-  }
-
-  // ---------------- start/stop foreground service helpers ----------------
-  Future<void> startForegroundServiceIfNeeded() async {
-    try {
-      final isRunning = await FlutterForegroundTask.isRunningService;
-      if (isRunning == true) {
-        log('[FG] Service already running');
+  // -------------------- Stream control --------------------
+  void startStream() {
+    FlutterAccessibilityService.isAccessibilityPermissionEnabled().then((granted) {
+      if (!granted) {
+        _showSnack("Akses accessibility belum diberikan. Tekan Request Permission dulu.");
         return;
       }
-
-      // Pastikan postUrl tersimpan ke data task supaya handler punya URL saat start
-      if (postUrl.isNotEmpty) {
+      _subscription?.cancel();
+      _subscription = FlutterAccessibilityService.accessStream.listen((event) async {
         try {
-          await FlutterForegroundTask.saveData(key: 'postUrl', value: postUrl);
-        } catch (e) {
-          debugPrint('Gagal saveData sebelum startService: $e');
-        }
-      }
+          if (event == null) return;
+          final pkg = event.packageName ?? '';
+          // filter toggles
+          if (appToggles.isNotEmpty && appToggles.containsKey(pkg) && appToggles[pkg] == false) {
+            log("Ignored app (toggle off): $pkg");
+            return;
+          }
 
-      await FlutterForegroundTask.startService(
-        serviceId: 199,
-        notificationTitle: 'Xcapp Notif Listener',
-        notificationText: 'Mendengarkan notifikasi...',
-        notificationIcon: null,
-        notificationButtons: [
-          const NotificationButton(id: 'btn_stop', text: 'Stop'),
-        ],
-        notificationInitialRoute: '/',
-        callback: startCallback,
-      );
-
-      log('[FG] Foreground service started');
-    } catch (e) {
-      log('[FG] Failed to start foreground service: $e');
-    }
-  }
-
-  Future<void> stopForegroundServiceIfNeeded() async {
-    try {
-      final isRunning = await FlutterForegroundTask.isRunningService;
-      if (isRunning == true) {
-        await FlutterForegroundTask.stopService();
-        log('[FG] Foreground service stopped');
-      }
-    } catch (e) {
-      log('[FG] Failed to stop foreground service: $e');
-    }
-  }
-
-  // ---------------- stream start/stop ----------------
-  void startStream() async {
-    final granted = await NotificationListenerService.isPermissionGranted();
-    if (!granted) {
-      _showSnack("Akses notifikasi belum diberikan. Tekan Request Permission dulu.");
-      return;
-    }
-
-    _subscription?.cancel();
-    _subscription = NotificationListenerService.notificationsStream.listen((event) async {
-      try {
-        log("[notif] ${event.packageName} : ${event.title} - ${event.content}");
-        final pkg = event.packageName ?? '';
-        if (appToggles.isNotEmpty && appToggles.containsKey(pkg) && appToggles[pkg] == false) {
-          log("Ignored app (toggle off): $pkg");
-          return;
-        }
-
-        // store event in memory and persist minimal fields
-        if (mounted) {
+          // Masukkan ke runtime list
           setState(() {
             events.insert(0, event);
           });
-        }
-        await _saveNotificationToPrefs(event);
 
-        // Send the notification to background TaskHandler for POSTing
-        final payload = {
-          'app': event.packageName ?? '',
-          'title': event.title ?? '',
-          'text': event.content ?? '',
-          'timestamp': DateTime.now().toIso8601String(),
-        };
+          // Simpan notif log (mapping sederhana)
+          final captured = (event.capturedText ?? '').trim();
+          final nodes = (event.nodesText ?? []);
+          final combinedText = ((captured.isNotEmpty) ? captured : nodes.join(' ')).trim();
+          final notifEntry = {
+            "id": DateTime.now().millisecondsSinceEpoch.toString(),
+            "app": pkg,
+            "title": event.eventType?.toString() ?? '',
+            "text": combinedText,
+            "timestamp": DateTime.now().toIso8601String(),
+            "raw": event.toString(),
+          };
+          notifLogs.insert(0, notifEntry);
+          await _saveNotifLogs();
 
-        try {
-          FlutterForegroundTask.sendDataToTask(jsonEncode(payload));
+          // auto-rule processing (NOTE: accessibility stream cannot reliably send reply; jadi kita hanya catat dan/atau post)
+          await _applyAutoResponseRules(event, combinedText);
+
+          // post to remote if configured
+          if (postUrl.isNotEmpty) {
+            await _postNotification(event, combinedText);
+          }
         } catch (e) {
-          log('[UI] Failed to sendDataToTask: $e');
+          log("Error handling incoming accessibility event: $e");
         }
+      }, onError: (e) {
+        log("Stream error: $e");
+      }, cancelOnError: false);
 
-        // Optionally also attempt to POST from UI (best-effort), but main purpose is BG
-        if (postUrl.isNotEmpty) {
-          _postNotification(event);
-        }
-      } catch (e) {
-        log('Error handling notification event: $e');
-      }
-    }, onError: (e) {
-      log("Stream error: $e");
-    }, cancelOnError: false);
-
-    // mark running
-    await _saveStreamFlag(true);
-    if (mounted) setState(() => streamRunning = true);
-    _showSnack("Stream notifikasi dimulai");
-    log("▶️ Stream started");
-
-    // ensure postUrl saved to task, then start foreground service to keep process alive (best-effort)
-    try {
-      if (postUrl.isNotEmpty) {
-        await FlutterForegroundTask.saveData(key: 'postUrl', value: postUrl);
-      }
-    } catch (e) {
-      log('Gagal saveData ke task sebelum start: $e');
-    }
-
-    await startForegroundServiceIfNeeded();
+      _saveStreamFlag(true);
+      setState(() => streamRunning = true);
+      _showSnack("Stream accessibility dimulai");
+      log("▶️ Accessibility stream started");
+    });
   }
 
   void stopStream() {
     _subscription?.cancel();
     _saveStreamFlag(false);
-    if (mounted) setState(() => streamRunning = false);
-    _showSnack("Stream notifikasi dihentikan");
-    log("🛑 Stream stopped");
-
-    // stop FG service
-    stopForegroundServiceIfNeeded();
+    setState(() => streamRunning = false);
+    _showSnack("Stream accessibility dihentikan");
+    log("🛑 Accessibility stream stopped");
   }
 
-  // ---------------- save notification minimal data ----------------
-  Future<void> _saveNotificationToPrefs(ServiceNotificationEvent event) async {
+  // -------------------- Post notification --------------------
+  Future<void> _postNotification(AccessibilityEvent event, String combinedText) async {
     try {
-      final Map<String, dynamic> small = {
-        "package": event.packageName ?? '',
-        "title": event.title ?? '',
-        "text": event.content ?? '',
+      final pkg = event.packageName ?? '';
+      final title = event.eventType?.toString() ?? '';
+      final text = combinedText;
+      final body = json.encode({
+        "app": pkg,
+        "title": title,
+        "text": text,
+        "timestamp": DateTime.now().toIso8601String(),
+      });
+
+      final uri = Uri.tryParse(postUrl);
+      if (uri == null) {
+        log("Invalid postUrl: $postUrl");
+        final postEntry = {
+          "id": DateTime.now().millisecondsSinceEpoch.toString(),
+          "url": postUrl,
+          "body": body,
+          "code": -1,
+          "response": "invalid_url",
+          "timestamp": DateTime.now().toIso8601String(),
+        };
+        postLogs.insert(0, postEntry);
+        await _savePostLogs();
+        return;
+      }
+
+      final resp = await http.post(uri, body: body, headers: {"Content-Type": "application/json"}).timeout(const Duration(seconds: 10));
+
+      final postEntry = {
+        "id": DateTime.now().millisecondsSinceEpoch.toString(),
+        "url": postUrl,
+        "body": body,
+        "code": resp.statusCode,
+        "response": resp.body,
         "timestamp": DateTime.now().toIso8601String(),
       };
-      savedNotifications.insert(0, small);
-      if (savedNotifications.length > 500) {
-        savedNotifications = savedNotifications.sublist(0, 500);
+      postLogs.insert(0, postEntry);
+      await _savePostLogs();
+
+      if (resp.statusCode >= 200 && resp.statusCode < 300) {
+        log("POST succeeded ${resp.statusCode}");
+      } else {
+        log("POST failed ${resp.statusCode} ${resp.body}");
       }
-      await _saveNotificationsToPrefs();
-      log("Saved notification to prefs: ${small['title']}");
     } catch (e) {
-      log("Failed save notif: $e");
-    }
-  }
-
-  // ---------------- post notification (UI fallback) ----------------
-  Future<void> _postNotification(ServiceNotificationEvent event) async {
-    final uri = Uri.tryParse(postUrl);
-    if (uri == null) {
-      _addPostLog(false, 0, "Invalid URL", event);
-      return;
-    }
-
-    final body = json.encode({
-      "app": event.packageName ?? '',
-      "title": event.title ?? '',
-      "text": event.content ?? '',
-      "timestamp": DateTime.now().toIso8601String(),
-    });
-
-    try {
-      final resp = await http.post(uri, body: body, headers: {"Content-Type": "application/json"}).timeout(const Duration(seconds: 10));
-      final ok = resp.statusCode >= 200 && resp.statusCode < 300;
-      _addPostLog(ok, resp.statusCode, resp.body, event);
-      log("POST ${resp.statusCode} -> ${resp.body}");
-    } catch (e) {
-      _addPostLog(false, 0, e.toString(), event);
       log("POST error: $e");
+      final postEntry = {
+        "id": DateTime.now().millisecondsSinceEpoch.toString(),
+        "url": postUrl,
+        "body": "error",
+        "code": -1,
+        "response": "$e",
+        "timestamp": DateTime.now().toIso8601String(),
+      };
+      postLogs.insert(0, postEntry);
+      await _savePostLogs();
     }
   }
 
-  Future<void> _addPostLog(bool success, int code, String message, ServiceNotificationEvent event) async {
-    final Map<String, dynamic> logEntry = {
-      "time": DateTime.now().toIso8601String(),
-      "package": event.packageName ?? '',
-      "title": event.title ?? '',
-      "success": success,
-      "code": code,
-      "message": message,
-    };
-    postLogs.insert(0, logEntry);
-    if (postLogs.length > 1000) postLogs = postLogs.sublist(0, 1000);
-    await _savePostLogs();
-    if (mounted) setState(() {});
-  }
-
-  // ---------------- installed apps ----------------
+  // -------------------- Installed apps --------------------
   Future<void> loadInstalledApps() async {
     setState(() => loadingApps = true);
     try {
@@ -634,22 +346,20 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
         }
       }
       await _saveAppToggles();
-      _showSnack("Daftar aplikasi dimuat (${installedApps.length})");
     } catch (e) {
       log("Failed load installed apps: $e");
       _showSnack("Gagal memuat daftar aplikasi: $e");
     } finally {
-      if (mounted) setState(() => loadingApps = false);
+      setState(() => loadingApps = false);
     }
   }
 
-  // helpers to extract fields robustly
   String? _extractAppName(dynamic a) {
     try {
       if (a == null) return null;
-      if (a is Map) return a['appName'] ?? a['name'] ?? a['label'];
-      final name = a.appName ?? a.name ?? a.label;
-      return name as String?;
+      if (a is Map) return (a['appName'] ?? a['name'] ?? a['label'])?.toString();
+      final name = (a.appName ?? a.name ?? a.label);
+      return name?.toString();
     } catch (_) {
       return a.toString();
     }
@@ -658,9 +368,9 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
   String? _extractPkgName(dynamic a) {
     try {
       if (a == null) return null;
-      if (a is Map) return a['packageName'] ?? a['package'] ?? a['pname'];
-      final pkg = a.packageName ?? a.package ?? a.pname;
-      return pkg as String?;
+      if (a is Map) return (a['packageName'] ?? a['package'] ?? a['pname'])?.toString();
+      final pkg = (a.packageName ?? a.package ?? a.pname);
+      return pkg?.toString();
     } catch (_) {
       return null;
     }
@@ -680,52 +390,126 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
     }
   }
 
-  // ---------------- deselect all ----------------
-  void deselectAllApps() {
-    for (var a in installedApps) {
-      final pkg = _extractPkgName(a);
-      if (pkg != null) appToggles[pkg] = false;
+  // -------------------- Auto-response rules --------------------
+  Future<void> _applyAutoResponseRules(AccessibilityEvent event, String combinedText) async {
+    try {
+      final pkg = event.packageName ?? '';
+      final text = combinedText;
+      for (var rule in autoRules) {
+        if (rule['enabled'] != true) continue;
+        final rulePkg = (rule['package'] ?? '').toString();
+        if (rulePkg.isNotEmpty && rulePkg != pkg) continue;
+        final pattern = (rule['pattern'] ?? '').toString();
+        if (pattern.isNotEmpty && !text.contains(pattern)) continue;
+        final responses = List<String>.from(rule['responses'] ?? []);
+        if (responses.isEmpty) continue;
+
+        // Karena accessibility stream tidak menyediakan API sendReply langsung,
+        // kita hanya mencatat bahwa rule ter-trigger. Jika ingin reply otomatis,
+        // perlu implementasi tambahan (NotificationListenerService + RemoteInput atau
+        // performAction pada node yang spesifik).
+        final arLog = {
+          "id": DateTime.now().millisecondsSinceEpoch.toString(),
+          "ruleId": rule['id'],
+          "package": pkg,
+          "in": text,
+          "responses": responses,
+          "note": "triggered_via_accessibility (no direct reply)",
+          "timestamp": DateTime.now().toIso8601String()
+        };
+
+        postLogs.insert(0, {
+          "id": arLog['id'],
+          "url": "auto-rule",
+          "body": json.encode(arLog),
+          "code": 0,
+          "response": "triggered",
+          "timestamp": arLog['timestamp']
+        });
+        await _savePostLogs();
+
+        // jika user ingin, kita juga bisa POST hasil rule ke server yang sama
+        if (postUrl.isNotEmpty) {
+          try {
+            final resp = await http.post(Uri.parse(postUrl),
+                headers: {"Content-Type": "application/json"},
+                body: json.encode({"type": "auto_rule_trigger", "data": arLog})).timeout(const Duration(seconds: 8));
+            postLogs.insert(0, {
+              "id": DateTime.now().millisecondsSinceEpoch.toString(),
+              "url": postUrl,
+              "body": json.encode(arLog),
+              "code": resp.statusCode,
+              "response": resp.body,
+              "timestamp": DateTime.now().toIso8601String()
+            });
+            await _savePostLogs();
+          } catch (e) {
+            log("Auto-rule post error: $e");
+          }
+        }
+        // jangan break — biarkan multiple rules apply
+      }
+    } catch (e) {
+      log("Error in auto rules: $e");
     }
-    _saveAppToggles();
-    _showSnack("Semua aplikasi dibatalkan pilih");
-    if (mounted) setState(() {});
   }
 
-  // ---------------- UI helpers ----------------
+  // -------------------- UI helpers --------------------
   void _showSnack(String text) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text), duration: const Duration(seconds: 2)));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(text), duration: const Duration(seconds: 2)),
+    );
+  }
+
+  // -------------------- UI Build --------------------
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          const CircleAvatar(
+            radius: 28,
+            backgroundColor: Color(0xFF8E2DE2),
+            child: Icon(Icons.account_circle, size: 48, color: Colors.white),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text("Halo, $username",
+                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF4A00E0))),
+                const SizedBox(height: 4),
+                Text(streamRunning ? "Status: Listening" : "Status: Stopped",
+                    style: TextStyle(color: streamRunning ? Colors.green : Colors.red)),
+              ],
+            ),
+          ),
+          IconButton(onPressed: () => _showAboutDialog(), icon: const Icon(Icons.info_outline)),
+        ],
+      ),
+    );
   }
 
   void _showAboutDialog() {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Tentang Notifikasi'),
-        content: const Text(
-            "Aplikasi mendengarkan notifikasi via NotificationListener.\n\nUntuk memastikan listener tetap aktif saat aplikasi ditutup, aplikasi akan mencoba menjalankan foreground service (lihat dokumentasi). Beberapa vendor perlu whitelist battery optimization."),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Tutup'))],
-      ),
-    );
-  }
-
-  // ---------------- UI building (tidak berubah) ----------------
-  Widget _buildHeader() {
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Row(
-        children: [
-          const CircleAvatar(radius: 28, backgroundColor: Color(0xFF8E2DE2), child: Icon(Icons.account_circle, size: 48, color: Colors.white)),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Halo, $username', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF4A00E0))),
-              const SizedBox(height: 4),
-              Text(streamRunning ? 'Status: Listening' : 'Status: Stopped', style: TextStyle(color: streamRunning ? Colors.green : Colors.red)),
-            ]),
+        title: const Text("Tentang Accessibility Listener"),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              Text("• Plugin menggunakan AccessibilityService untuk membaca event dari aplikasi lain."), SizedBox(height: 6),
+              Text("• Aksesibilitas harus diaktifkan oleh user di Settings (Request Permission akan membuka halaman setting)."), SizedBox(height: 6),
+              Text("• Accessibility stream tidak selalu menyamai detail NotificationListener (contoh: icon, remoteReply langsung)."), SizedBox(height: 6),
+              Text("• POST yang dikirim mengikuti JSON: { app, title, text, timestamp }"), SizedBox(height: 6),
+              Text("• Auto-response rules hanya trigger/record ketika match. Untuk auto-reply otomatis, butuh implementasi tambahan."),
+            ],
           ),
-          IconButton(onPressed: () => _showAboutDialog(), icon: const Icon(Icons.info_outline)),
-        ],
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text("Tutup"))],
       ),
     );
   }
@@ -738,105 +522,96 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
-      child: Column(children: [
-        GridView.builder(
-          physics: const NeverScrollableScrollPhysics(),
-          shrinkWrap: true,
-          itemCount: menuItems.length,
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, mainAxisSpacing: 16, crossAxisSpacing: 16),
-          itemBuilder: (context, index) {
-            final item = menuItems[index];
-            final title = (item['title'] ?? '').toString();
-            final iconData = item['icon'] as IconData?;
-            return GestureDetector(
-              onTap: () {
-                if (title == "XcEdit") Navigator.pushNamed(context, '/xcedit');
-                if (title == "Upload Produk") Navigator.pushNamed(context, '/upload_produk');
-              },
-              child: Container(
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(colors: [Color(0xFF8E2DE2), Color(0xFF4A00E0)], begin: Alignment.topLeft, end: Alignment.bottomRight),
-                  borderRadius: BorderRadius.circular(14),
-                  boxShadow: [BoxShadow(color: Colors.deepPurple.withOpacity(0.18), blurRadius: 8, offset: const Offset(0, 4))],
-                ),
-                child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  Container(
-                    height: 56,
-                    width: 56,
-                    decoration: BoxDecoration(color: Colors.white.withOpacity(0.12), shape: BoxShape.circle),
-                    child: iconData != null ? Icon(iconData, color: Colors.white, size: 30) : const SizedBox.shrink(),
+      child: Column(
+        children: [
+          GridView.builder(
+            physics: const NeverScrollableScrollPhysics(),
+            shrinkWrap: true,
+            itemCount: menuItems.length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, mainAxisSpacing: 16, crossAxisSpacing: 16),
+            itemBuilder: (context, index) {
+              final item = menuItems[index];
+              final title = (item['title'] ?? '').toString();
+              final icon = item['icon'] as IconData?;
+              return GestureDetector(
+                onTap: () {
+                  if (title == "XcEdit") {
+                    Navigator.pushNamed(context, '/xcedit');
+                  } else if (title == "Upload Produk") {
+                    Navigator.pushNamed(context, '/upload_produk');
+                  }
+                },
+                child: Container(
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(colors: [Color(0xFF8E2DE2), Color(0xFF4A00E0)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [BoxShadow(color: Colors.deepPurple.withOpacity(0.2), blurRadius: 8, offset: const Offset(0, 4))],
                   ),
-                  const SizedBox(height: 12),
-                  Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-                ]),
-              ),
-            );
-          },
-        ),
-        const SizedBox(height: 20),
-        Card(
-          elevation: 2,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('Kontrol Notifikasi', style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              Wrap(spacing: 8, runSpacing: 8, children: [
-                ElevatedButton.icon(onPressed: requestPermission, icon: const Icon(Icons.lock_open), label: const Text('Request Permission'), style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6C22E0), foregroundColor: Colors.white)),
-                ElevatedButton.icon(onPressed: checkPermission, icon: const Icon(Icons.check), label: const Text('Check Permission'), style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6C22E0), foregroundColor: Colors.white)),
-                ElevatedButton.icon(onPressed: streamRunning ? null : startStream, icon: const Icon(Icons.play_arrow), label: const Text('Start Stream'), style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A86B), foregroundColor: Colors.white)),
-                ElevatedButton.icon(onPressed: streamRunning ? stopStream : null, icon: const Icon(Icons.stop), label: const Text('Stop Stream'), style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white)),
-                ElevatedButton.icon(onPressed: loadInstalledApps, icon: const Icon(Icons.apps), label: const Text('Load Installed Apps'), style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6C22E0), foregroundColor: Colors.white)),
-                ElevatedButton.icon(onPressed: openBatteryOptimizationSettings, icon: const Icon(Icons.battery_6_bar), label: const Text('Whitelist Battery'), style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, foregroundColor: Colors.white)),
-              ]),
-              const SizedBox(height: 8),
-              Text('Stream: ${streamRunning ? 'ON' : 'OFF'}'),
-              const SizedBox(height: 6),
-              const Text("Tip: Aktifkan 'Request Permission' dan beri Notification Access di Settings."),
-            ]),
+                  child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    Container(
+                      height: 56,
+                      width: 56,
+                      decoration: BoxDecoration(color: Colors.white.withOpacity(0.12), shape: BoxShape.circle),
+                      child: Icon(icon ?? Icons.apps, color: Colors.white, size: 30),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                  ]),
+                ),
+              );
+            },
           ),
-        ),
-      ]),
+          const SizedBox(height: 20),
+          Card(
+            elevation: 2,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text("Kontrol Accessibility Stream", style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Wrap(spacing: 8, runSpacing: 8, children: [
+                  ElevatedButton.icon(onPressed: requestPermission, icon: const Icon(Icons.lock_open), label: const Text("Request Permission")),
+                  ElevatedButton.icon(onPressed: checkPermission, icon: const Icon(Icons.check), label: const Text("Check Permission")),
+                  ElevatedButton.icon(onPressed: streamRunning ? null : startStream, icon: const Icon(Icons.play_arrow), label: const Text("Start Stream")),
+                  ElevatedButton.icon(onPressed: streamRunning ? stopStream : null, icon: const Icon(Icons.stop), label: const Text("Stop Stream")),
+                  ElevatedButton.icon(onPressed: loadInstalledApps, icon: const Icon(Icons.apps), label: const Text("Load Installed Apps")),
+                ]),
+                const SizedBox(height: 8),
+                Text("Stream: ${streamRunning ? 'ON' : 'OFF'}"),
+                const SizedBox(height: 8),
+                Text("Post URL: ${postUrl.isEmpty ? 'tidak diatur' : postUrl}", style: const TextStyle(fontSize: 12)),
+              ]),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _buildNotificationTile(ServiceNotificationEvent notif) {
+  Widget _buildNotificationTile(AccessibilityEvent? notif) {
+    if (notif == null) return const SizedBox();
     final pkg = notif.packageName ?? 'unknown';
-    final title = notif.title ?? '(no title)';
-    final content = notif.content ?? '(no content)';
-    final iconBytes = notif.appIcon;
-    final largeIcon = notif.largeIcon;
-
+    final title = notif.eventType?.toString() ?? '(event)';
+    final captured = (notif.capturedText ?? '').trim();
+    final nodes = (notif.nodesText ?? []);
+    final content = (captured.isNotEmpty) ? captured : nodes.join(' ');
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       child: ListTile(
-        onTap: () async {
-          if (notif.canReply == true) {
-            try {
-              final ok = await notif.sendReply('Balasan otomatis');
-              _showSnack(ok ? 'Balasan terkirim' : 'Balasan gagal');
-            } catch (e) {
-              _showSnack('Gagal mengirim balasan: $e');
-            }
-          } else {
-            _showSnack('Notifikasi ini tidak mendukung reply');
-          }
+        onTap: () {
+          _showSnack("Accessibility event tapped — details saved to logs.");
         },
-        leading: iconBytes != null ? Image.memory(iconBytes, width: 46, height: 46) : CircleAvatar(child: Text(pkg.isNotEmpty ? pkg.substring(0, 1).toUpperCase() : '?')),
+        leading: CircleAvatar(child: Text(pkg.isNotEmpty ? pkg.substring(0, 1).toUpperCase() : "?")),
         title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(content, maxLines: 2, overflow: TextOverflow.ellipsis),
           const SizedBox(height: 6),
           Row(children: [
             Expanded(child: Text(pkg, style: const TextStyle(fontSize: 12, color: Colors.grey))),
-            if (notif.hasRemoved == true)
-              const Text('Removed', style: TextStyle(color: Colors.red, fontSize: 12))
-            else
-              Text(notif.canReply == true ? 'Can reply' : '', style: const TextStyle(color: Colors.green, fontSize: 12)),
+            Text(notif.isFocused == true ? "Focused" : "", style: const TextStyle(color: Colors.green, fontSize: 12)),
           ]),
-          if (largeIcon != null) Padding(padding: const EdgeInsets.only(top: 8.0), child: Image.memory(largeIcon)),
         ]),
         isThreeLine: true,
       ),
@@ -844,29 +619,21 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
   }
 
   Widget _buildNotificationsTab() {
-    return Column(children: [
-      Padding(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Text('Tersimpan: ${savedNotifications.length}', style: const TextStyle(fontWeight: FontWeight.w600)),
-        Text('Live: ${events.length}', style: const TextStyle(color: Colors.grey)),
-      ])),
-      Expanded(
-        child: events.isEmpty
-            ? const Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.notifications_none, size: 56, color: Colors.grey), SizedBox(height: 8), Text('Belum ada notifikasi masuk')]))
-            : RefreshIndicator(
-                onRefresh: () async {
-                  if (mounted) setState(() {});
-                },
-                child: ListView.builder(
-                  padding: const EdgeInsets.only(top: 8, bottom: 12),
-                  itemCount: events.length,
-                  itemBuilder: (context, index) {
-                    final notif = events[index];
-                    return _buildNotificationTile(notif);
-                  },
-                ),
-              ),
-      ),
-    ]);
+    return events.isEmpty
+        ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: const [Icon(Icons.notifications_none, size: 56, color: Colors.grey), SizedBox(height: 8), Text("Belum ada event accessibility masuk")] ))
+        : RefreshIndicator(
+            onRefresh: () async {
+              setState(() {});
+            },
+            child: ListView.builder(
+              padding: const EdgeInsets.only(top: 8, bottom: 12),
+              itemCount: events.length,
+              itemBuilder: (context, index) {
+                final notif = events[index];
+                return _buildNotificationTile(notif);
+              },
+            ),
+          );
   }
 
   Widget _buildSettingsTab() {
@@ -878,36 +645,36 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Column(children: [
-              const Align(alignment: Alignment.centerLeft, child: Text('Post incoming notifications to URL', style: TextStyle(fontWeight: FontWeight.bold))),
+              const Align(alignment: Alignment.centerLeft, child: Text("Post incoming events to URL", style: TextStyle(fontWeight: FontWeight.bold))),
               const SizedBox(height: 8),
               TextFormField(
-                controller: _postUrlController,
-                decoration: const InputDecoration(hintText: 'https://yourserver.com/endpoint', border: OutlineInputBorder()),
-                onChanged: (v) => postUrl = v,
+                initialValue: postUrl,
+                decoration: const InputDecoration(hintText: "https://yourserver.com/endpoint", border: OutlineInputBorder()),
+                onChanged: (v) => setState(() => postUrl = v),
               ),
               const SizedBox(height: 8),
               Row(children: [
                 ElevatedButton.icon(
                     onPressed: () {
-                      if (_postUrlController.text.trim().isEmpty) {
-                        _showSnack('Isi dulu URL sebelum simpan');
+                      if (postUrl.isEmpty) {
+                        _showSnack("Isi dulu URL sebelum simpan");
                         return;
                       }
-                      _savePostUrl(_postUrlController.text.trim());
-                      _showSnack('URL disimpan');
+                      _savePostUrl(postUrl);
+                      _showSnack("URL disimpan");
                     },
                     icon: const Icon(Icons.save),
-                    label: const Text('Simpan URL'),
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6C22E0), foregroundColor: Colors.white)),
+                    label: const Text("Simpan URL")),
                 const SizedBox(width: 12),
-                ElevatedButton(
+                TextButton(
                     onPressed: () {
-                      _postUrlController.clear();
+                      setState(() {
+                        postUrl = '';
+                      });
                       _savePostUrl('');
-                      _showSnack('URL dihapus');
+                      _showSnack("URL dihapus");
                     },
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.grey, foregroundColor: Colors.white),
-                    child: const Text('Hapus')),
+                    child: const Text("Hapus")),
               ])
             ]),
           ),
@@ -919,8 +686,8 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
             padding: const EdgeInsets.all(12),
             child: Column(children: [
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                const Text('Aplikasi yang diambil notifikasi', style: TextStyle(fontWeight: FontWeight.bold)),
-                ElevatedButton(onPressed: deselectAllApps, style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6C22E0), foregroundColor: Colors.white), child: const Text('Deselect All')),
+                const Text("Aplikasi yang diambil event", style: TextStyle(fontWeight: FontWeight.bold)),
+                IconButton(onPressed: () => loadInstalledApps(), icon: const Icon(Icons.refresh))
               ]),
               const SizedBox(height: 8),
               loadingApps
@@ -939,83 +706,372 @@ class _XcappPageState extends State<XcappPage> with SingleTickerProviderStateMix
                             final iconBytes = _extractIconBytes(a);
                             final enabled = appToggles[pkg] ?? true;
                             return ListTile(
-                              leading: iconBytes != null ? Image.memory(iconBytes, width: 40, height: 40) : CircleAvatar(child: Text(name.substring(0, 1).toUpperCase())),
+                              leading: iconBytes != null ? Image.memory(iconBytes, width: 40, height: 40) : CircleAvatar(child: Text(name.isNotEmpty ? name.substring(0, 1).toUpperCase() : "?")),
                               title: Text(name),
                               subtitle: Text(pkg, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                              trailing: Switch(value: enabled, onChanged: (val) {
-                                setState(() {
-                                  appToggles[pkg] = val;
-                                });
-                                _saveAppToggles();
-                              }),
+                              trailing: Switch(
+                                  value: enabled,
+                                  onChanged: (val) {
+                                    setState(() {
+                                      appToggles[pkg] = val;
+                                    });
+                                    _saveAppToggles();
+                                  }),
                             );
                           }),
             ]),
           ),
         ),
         const SizedBox(height: 12),
-        const Text('Catatan: aktifkan only the apps you want to receive notifications from.'),
+        const Text("Catatan: aktifkan hanya aplikasi yang ingin menerima event."),
       ]),
     );
   }
 
-  Widget _buildLogsTab() {
-    return Column(children: [
-      Padding(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        const Text('Logs POST', style: TextStyle(fontWeight: FontWeight.bold)),
-        Text('Total: ${postLogs.length}', style: const TextStyle(color: Colors.grey)),
-      ])),
-      Expanded(
-        child: postLogs.isEmpty
-            ? const Center(child: Text('Belum ada log post'))
-            : ListView.builder(
-                itemCount: postLogs.length,
-                itemBuilder: (context, idx) {
-                  final l = postLogs[idx];
-                  final time = l['time'] ?? '';
-                  final pkg = l['package'] ?? '';
-                  final title = l['title'] ?? '';
-                  final success = l['success'] == true;
-                  final code = l['code'] ?? 0;
-                  final msg = (l['message'] ?? '').toString();
-                  return Card(
-                    margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    child: ListTile(
-                      leading: Icon(success ? Icons.check_circle : Icons.error, color: success ? Colors.green : Colors.red),
-                      title: Text("$pkg — $title", maxLines: 1, overflow: TextOverflow.ellipsis),
-                      subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text("Waktu: $time", style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                        Text("Status: ${success ? 'OK ($code)' : 'Fail ($code)'}", style: const TextStyle(fontSize: 12)),
-                        if (msg.isNotEmpty) Text("Msg: $msg", style: const TextStyle(fontSize: 12)),
-                      ]),
-                    ),
-                  );
-                }),
-      ),
-    ]);
+  // -------------------- Auto-response UI --------------------
+  Widget _buildAutoResponseTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(12),
+      child: Column(children: [
+        Card(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                const Text("Auto Response Rules", style: TextStyle(fontWeight: FontWeight.bold)),
+                ElevatedButton.icon(onPressed: () => _showAddRuleDialog(), icon: const Icon(Icons.add), label: const Text("Tambah Rule"))
+              ]),
+              const SizedBox(height: 8),
+              autoRules.isEmpty
+                  ? const Padding(padding: EdgeInsets.all(8), child: Text("Belum ada rule. Tekan 'Tambah Rule' untuk membuat."))
+                  : ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: autoRules.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, idx) {
+                        final r = autoRules[idx];
+                        final pkg = r['package'] ?? '(any)';
+                        final pat = r['pattern'] ?? '(any)';
+                        final enabled = r['enabled'] == true;
+                        final responses = List<String>.from(r['responses'] ?? []);
+                        return ListTile(
+                          title: Text("App: $pkg"),
+                          subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text("Pattern: $pat"),
+                            const SizedBox(height: 4),
+                            Text("Responses: ${responses.join(' | ')}", maxLines: 2, overflow: TextOverflow.ellipsis)
+                          ]),
+                          trailing: Wrap(spacing: 8, children: [
+                            Switch(value: enabled, onChanged: (v) {
+                              setState(() {
+                                r['enabled'] = v;
+                              });
+                              _saveAutoRules();
+                            }),
+                            IconButton(icon: const Icon(Icons.edit), onPressed: () => _showEditRuleDialog(r)),
+                            IconButton(icon: const Icon(Icons.delete), onPressed: () => _deleteRule(r)),
+                          ]),
+                        );
+                      }),
+            ]),
+          ),
+        ),
+        const SizedBox(height: 12),
+        const Text("Contoh: untuk WhatsApp biasa package biasanya 'com.whatsapp', untuk WhatsApp Business 'com.whatsapp.w4b'. Pattern kosong = match semua. (Auto-reply perlu implementasi tambahan)."),
+      ]),
+    );
   }
 
+  Future<void> _showAddRuleDialog() async {
+    final nameController = TextEditingController();
+    String selectedPkg = '';
+    String pattern = '';
+    final responsesController = TextEditingController();
+    // build list of package options from installedApps or common defaults
+    final pkgOptions = <Map<String, String>>[];
+    for (var a in installedApps) {
+      final nm = _extractAppName(a) ?? '';
+      final pkg = _extractPkgName(a) ?? '';
+      if (pkg.isNotEmpty) pkgOptions.add({"name": nm, "pkg": pkg});
+    }
+    // add common WhatsApp if not present
+    if (!pkgOptions.any((e) => e['pkg'] == 'com.whatsapp')) {
+      pkgOptions.insert(0, {"name": "WhatsApp", "pkg": "com.whatsapp"});
+    }
+    if (!pkgOptions.any((e) => e['pkg'] == 'com.whatsapp.w4b')) {
+      pkgOptions.insert(0, {"name": "WhatsApp Business", "pkg": "com.whatsapp.w4b"});
+    }
+
+    await showDialog(
+        context: context,
+        builder: (ctx) {
+          return AlertDialog(
+            title: const Text("Tambah Auto-Response Rule"),
+            content: SingleChildScrollView(
+              child: Column(children: [
+                DropdownButtonFormField<String>(
+                  value: selectedPkg.isEmpty ? null : selectedPkg,
+                  hint: const Text("Pilih Aplikasi (kosong = semua aplikasi)"),
+                  items: [
+                    const DropdownMenuItem(value: '', child: Text("Semua aplikasi (match pattern)")),
+                    ...pkgOptions.map((e) => DropdownMenuItem(value: e['pkg'], child: Text("${e['name']} (${e['pkg']})"))).toList()
+                  ],
+                  onChanged: (v) => selectedPkg = v ?? '',
+                ),
+                const SizedBox(height: 8),
+                TextFormField(
+                  decoration: const InputDecoration(hintText: "Pattern (kata/teks) - kosong = match semua", border: OutlineInputBorder()),
+                  onChanged: (v) => pattern = v,
+                ),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: responsesController,
+                  maxLines: 4,
+                  decoration: const InputDecoration(hintText: "Responses (pisah baris untuk banyak) - hanya dicatat, tidak dikirim otomatis", border: OutlineInputBorder()),
+                ),
+              ]),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Batal")),
+              ElevatedButton(
+                  onPressed: () {
+                    final responses = responsesController.text.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+                    final newRule = {
+                      "id": DateTime.now().millisecondsSinceEpoch.toString(),
+                      "package": selectedPkg ?? '',
+                      "pattern": pattern ?? '',
+                      "responses": responses,
+                      "enabled": true
+                    };
+                    setState(() {
+                      autoRules.insert(0, newRule);
+                    });
+                    _saveAutoRules();
+                    Navigator.pop(ctx);
+                    _showSnack("Rule ditambahkan");
+                  },
+                  child: const Text("Simpan"))
+            ],
+          );
+        });
+  }
+
+  Future<void> _showEditRuleDialog(Map<String, dynamic> rule) async {
+    final responsesController = TextEditingController(text: (rule['responses'] as List<dynamic>?)?.join('\n') ?? '');
+    String selectedPkg = (rule['package'] ?? '').toString();
+    String pattern = (rule['pattern'] ?? '').toString();
+
+    final pkgOptions = <Map<String, String>>[];
+    for (var a in installedApps) {
+      final nm = _extractAppName(a) ?? '';
+      final pkg = _extractPkgName(a) ?? '';
+      if (pkg.isNotEmpty) pkgOptions.add({"name": nm, "pkg": pkg});
+    }
+    if (!pkgOptions.any((e) => e['pkg'] == 'com.whatsapp')) {
+      pkgOptions.insert(0, {"name": "WhatsApp", "pkg": "com.whatsapp"});
+    }
+    if (!pkgOptions.any((e) => e['pkg'] == 'com.whatsapp.w4b')) {
+      pkgOptions.insert(0, {"name": "WhatsApp Business", "pkg": "com.whatsapp.w4b"});
+    }
+
+    await showDialog(
+        context: context,
+        builder: (ctx) {
+          return AlertDialog(
+            title: const Text("Edit Auto-Response Rule"),
+            content: SingleChildScrollView(
+              child: Column(children: [
+                DropdownButtonFormField<String>(
+                  value: selectedPkg.isEmpty ? '' : selectedPkg,
+                  items: [
+                    const DropdownMenuItem(value: '', child: Text("Semua aplikasi (match pattern)")),
+                    ...pkgOptions.map((e) => DropdownMenuItem(value: e['pkg'], child: Text("${e['name']} (${e['pkg']})"))).toList()
+                  ],
+                  onChanged: (v) => selectedPkg = v ?? '',
+                ),
+                const SizedBox(height: 8),
+                TextFormField(
+                  initialValue: pattern,
+                  decoration: const InputDecoration(hintText: "Pattern (kata/teks) - kosong = match semua", border: OutlineInputBorder()),
+                  onChanged: (v) => pattern = v,
+                ),
+                const SizedBox(height: 8),
+                TextFormField(controller: responsesController, maxLines: 4, decoration: const InputDecoration(hintText: "Responses (pisah baris)", border: OutlineInputBorder())),
+              ]),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Batal")),
+              ElevatedButton(
+                  onPressed: () {
+                    final responses = responsesController.text.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+                    setState(() {
+                      rule['package'] = selectedPkg;
+                      rule['pattern'] = pattern;
+                      rule['responses'] = responses;
+                    });
+                    _saveAutoRules();
+                    Navigator.pop(ctx);
+                    _showSnack("Rule diupdate");
+                  },
+                  child: const Text("Simpan"))
+            ],
+          );
+        });
+  }
+
+  void _deleteRule(Map<String, dynamic> rule) {
+    setState(() {
+      autoRules.removeWhere((r) => r['id'] == rule['id']);
+    });
+    _saveAutoRules();
+    _showSnack("Rule dihapus");
+  }
+
+  // -------------------- Logs UI --------------------
+  Widget _buildLogsTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(12),
+      child: Column(children: [
+        Card(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                const Text("Notification Logs", style: TextStyle(fontWeight: FontWeight.bold)),
+                Row(children: [
+                  TextButton(onPressed: () => _clearNotifLogs(), child: const Text("Hapus Semua")),
+                ])
+              ]),
+              const SizedBox(height: 8),
+              notifLogs.isEmpty
+                  ? const Padding(padding: EdgeInsets.all(8), child: Text("Belum ada log notifikasi."))
+                  : ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: notifLogs.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, i) {
+                        final e = notifLogs[i];
+                        return ListTile(
+                          title: Text(e['title'] ?? '(no title)'),
+                          subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(e['text'] ?? ''),
+                            const SizedBox(height: 4),
+                            Text("${e['app'] ?? ''} • ${e['timestamp'] ?? ''}", style: const TextStyle(fontSize: 12)),
+                          ]),
+                          trailing: IconButton(onPressed: () => _deleteNotifLog(e['id'].toString()), icon: const Icon(Icons.delete)),
+                        );
+                      }),
+            ]),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                const Text("Post Logs", style: TextStyle(fontWeight: FontWeight.bold)),
+                Row(children: [
+                  TextButton(onPressed: () => _clearPostLogs(), child: const Text("Hapus Semua")),
+                ])
+              ]),
+              const SizedBox(height: 8),
+              postLogs.isEmpty
+                  ? const Padding(padding: EdgeInsets.all(8), child: Text("Belum ada log post."))
+                  : ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: postLogs.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, i) {
+                        final p = postLogs[i];
+                        return ListTile(
+                          title: Text("${p['url'] ?? ''} • ${p['code'] ?? ''}"),
+                          subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(p['body'] ?? ''),
+                            const SizedBox(height: 4),
+                            Text("${p['timestamp'] ?? ''}", style: const TextStyle(fontSize: 12)),
+                          ]),
+                          trailing: IconButton(onPressed: () => _deletePostLog(p['id'].toString()), icon: const Icon(Icons.delete)),
+                        );
+                      }),
+            ]),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  Future<void> _clearNotifLogs() async {
+    notifLogs.clear();
+    await _saveNotifLogs();
+    setState(() {});
+    _showSnack("Semua notification log dihapus");
+  }
+
+  Future<void> _deleteNotifLog(String id) async {
+    notifLogs.removeWhere((e) => e['id'].toString() == id);
+    await _saveNotifLogs();
+    setState(() {});
+    _showSnack("Log dihapus");
+  }
+
+  Future<void> _clearPostLogs() async {
+    postLogs.clear();
+    await _savePostLogs();
+    setState(() {});
+    _showSnack("Semua post log dihapus");
+  }
+
+  Future<void> _deletePostLog(String id) async {
+    postLogs.removeWhere((e) => e['id'].toString() == id);
+    await _savePostLogs();
+    setState(() {});
+    _showSnack("Post log dihapus");
+  }
+
+  // -------------------- Build --------------------
   @override
   Widget build(BuildContext context) {
-    return WithForegroundTask(
-      child: Scaffold(
-        backgroundColor: const Color(0xFFF5F6FA),
-        body: SafeArea(
-          child: Column(children: [
-            _buildHeader(),
-            TabBar(
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F6FA),
+      body: SafeArea(
+        child: Column(children: [
+          _buildHeader(),
+          TabBar(
+            controller: _tabController,
+            labelColor: const Color(0xFF4A00E0),
+            unselectedLabelColor: Colors.grey,
+            indicatorColor: const Color(0xFF4A00E0),
+            tabs: const [Tab(text: "Menu"), Tab(text: "Notifikasi"), Tab(text: "Settings"), Tab(text: "Auto Response"), Tab(text: "Logs")],
+          ),
+          Expanded(
+            child: TabBarView(
               controller: _tabController,
-              labelColor: const Color(0xFF4A00E0),
-              unselectedLabelColor: Colors.grey,
-              indicatorColor: const Color(0xFF4A00E0),
-              tabs: const [Tab(text: 'Menu'), Tab(text: 'Notifikasi'), Tab(text: 'Settings'), Tab(text: 'Log')],
+              children: [_buildMenuTab(), _buildNotificationsTab(), _buildSettingsTab(), _buildAutoResponseTab(), _buildLogsTab()],
             ),
-            Expanded(
-              child: TabBarView(controller: _tabController, children: [_buildMenuTab(), _buildNotificationsTab(), _buildSettingsTab(), _buildLogsTab()]),
-            )
-          ]),
-        ),
+          ),
+        ]),
       ),
     );
   }
+
+  // -------------------- Dispose --------------------
+  @override
+  void dispose() {
+    _subscription?.cancel();
+    _tabController.dispose();
+    super.dispose();
+  }
+}
+
+extension on AccessibilityEvent {
+  get capturedText => null;
+  
+  get nodesText => null;
 }
