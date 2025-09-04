@@ -28,6 +28,7 @@ dependencies:
   notification_listener_service: ^0.3.4
   installed_apps: ^1.6.0
   permission_handler: ^12.0.1
+  flutter_accessibility_service: ^1.0.0
 
 dev_dependencies:
   flutter_test:
