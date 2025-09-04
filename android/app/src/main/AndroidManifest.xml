@@ -9,15 +9,15 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Android 13+ runtime will ask POST_NOTIFICATIONS when needed -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <!-- Tambahan Android 14: service tipe khusus -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- Agar bisa auto-start FG service setelah boot (opsional) -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <!-- Listener & Accessibility permissions -->
+    <!-- Listener & Accessibility permissions (protected permissions) -->
     <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
@@ -56,7 +56,7 @@
         tools:replace="android:allowBackup">
 
         <!-- ========================================= -->
-        <!-- MainActivity -->
+        <!-- MainActivity (Flutter) -->
         <!-- ========================================= -->
         <activity
             android:name=".MainActivity"
@@ -88,7 +88,7 @@
         </activity>
 
         <!-- ========================================= -->
-        <!-- Foreground service untuk background task -->
+        <!-- Foreground service untuk background task (flutter_foreground_task) -->
         <!-- ========================================= -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
@@ -96,7 +96,8 @@
             android:exported="false" />
 
         <!-- ========================================= -->
-        <!-- Notification listener service -->
+        <!-- NotificationListenerService (native) -->
+        <!-- Implementasikan NotificationListener.java/kt di folder java/kt -->
         <!-- ========================================= -->
         <service
             android:name=".NotificationListener"
@@ -109,7 +110,8 @@
         </service>
 
         <!-- ========================================= -->
-        <!-- Accessibility service -->
+        <!-- AccessibilityService (native) -->
+        <!-- Implementasikan MyAccessibilityService.java/kt di folder java/kt -->
         <!-- ========================================= -->
         <service
             android:name=".MyAccessibilityService"
@@ -119,6 +121,8 @@
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
             </intent-filter>
+
+            <!-- meta-data menunjuk ke file XML konfigurasi di res/xml -->
             <meta-data
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
