@@ -1,4 +1,4 @@
-// xcapp_page.dart
+// FILE: lib/xcapp_page.dart
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
@@ -10,7 +10,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:http/http.dart' as http;
 import 'package:installed_apps/installed_apps.dart';
 
-// ganti: menggunakan accessibility service
+// menggunakan accessibility service
 import 'package:flutter_accessibility_service/accessibility_event.dart';
 import 'package:flutter_accessibility_service/flutter_accessibility_service.dart';
 
@@ -36,17 +36,18 @@ class _XcappPageState extends State<XcappPage>
   bool streamRunning = false;
   bool loadingApps = false;
 
-  // auto response rules (rule hanya mencatat / post; tidak melakukan sendReply)
-  List<Map<String, dynamic>> autoRules = []; // {id, package, pattern, responses[], enabled}
-
   // logs
   List<Map<String, dynamic>> notifLogs = []; // {id, app, title, text, timestamp}
   List<Map<String, dynamic>> postLogs = []; // {id, url, body, code, response, timestamp}
 
+  // helper untuk mendeteksi apakah stream benar-benar mengirim event
+  bool _gotFirstEvent = false;
+  Timer? _streamWatchTimer;
+
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 5, vsync: this);
+    _tabController = TabController(length: 4, vsync: this); // Menu, Notifikasi, Settings, Logs
     _loadAllSettings();
   }
 
@@ -55,9 +56,9 @@ class _XcappPageState extends State<XcappPage>
     await _loadPostUrl();
     await _loadStreamFlag();
     await _loadAppToggles();
-    await _loadAutoRules();
     await _loadLogs();
     if (streamRunning) {
+      // coba mulai stream lagi (safe)
       startStream();
     }
   }
@@ -118,28 +119,6 @@ class _XcappPageState extends State<XcappPage>
     await prefs.setString('notif_app_toggles', json.encode(appToggles));
   }
 
-  Future<void> _loadAutoRules() async {
-    final prefs = await SharedPreferences.getInstance();
-    final s = prefs.getString('auto_response_rules');
-    if (s != null) {
-      try {
-        final List<dynamic> arr = json.decode(s);
-        setState(() {
-          autoRules = arr.cast<Map<String, dynamic>>();
-        });
-      } catch (e) {
-        autoRules = [];
-      }
-    } else {
-      autoRules = [];
-    }
-  }
-
-  Future<void> _saveAutoRules() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('auto_response_rules', json.encode(autoRules));
-  }
-
   Future<void> _loadLogs() async {
     final prefs = await SharedPreferences.getInstance();
     final s1 = prefs.getString('notif_logs');
@@ -179,7 +158,7 @@ class _XcappPageState extends State<XcappPage>
 
   // -------------------- Permission handling --------------------
   Future<void> requestPermission() async {
-    // Android 13 runtime notifications permission (masih relevan jika butuh notifikasi lokal)
+    // Android 13 runtime notifications permission (tidak wajib untuk accessibility)
     if (await Permission.notification.isDenied) {
       final res = await Permission.notification.request();
       final ok = res.isGranted;
@@ -203,16 +182,32 @@ class _XcappPageState extends State<XcappPage>
   }
 
   // -------------------- Stream control --------------------
-  void startStream() {
-    FlutterAccessibilityService.isAccessibilityPermissionEnabled().then((granted) {
+  void startStream() async {
+    try {
+      final granted = await FlutterAccessibilityService.isAccessibilityPermissionEnabled();
       if (!granted) {
         _showSnack("Akses accessibility belum diberikan. Tekan Request Permission dulu.");
         return;
       }
+
+      // cancel existing subscription
       _subscription?.cancel();
+      _gotFirstEvent = false;
+
+      // safety timer: jika dalam 6 detik tidak ada event, informasikan user
+      _streamWatchTimer?.cancel();
+      _streamWatchTimer = Timer(const Duration(seconds: 6), () {
+        if (!_gotFirstEvent) {
+          _showSnack("Tidak menerima event dari accessibility. Periksa: layanan aktif di Settings atau restart device.");
+          log("[ACC] Stream aktif tapi belum ada event (watch timeout).");
+        }
+      });
+
       _subscription = FlutterAccessibilityService.accessStream.listen((event) async {
         try {
           if (event == null) return;
+          _gotFirstEvent = true; // tanda bahwa stream sukses menerima event
+
           final pkg = event.packageName ?? '';
           // filter toggles
           if (appToggles.isNotEmpty && appToggles.containsKey(pkg) && appToggles[pkg] == false) {
@@ -220,15 +215,18 @@ class _XcappPageState extends State<XcappPage>
             return;
           }
 
-          // Masukkan ke runtime list
+          // Masukkan ke runtime list (UI)
           setState(() {
             events.insert(0, event);
           });
 
+          // Ambil teks terbaik: capturedText atau nodesText
+          final captured = (event.capturedText ?? '').toString().trim();
+          final nodesList = (event.nodesText ?? <String>[]) as List<dynamic>;
+          final nodesJoined = nodesList.map((e) => e?.toString() ?? '').join(' ').trim();
+          final combinedText = (captured.isNotEmpty) ? captured : nodesJoined;
+
           // Simpan notif log (mapping sederhana)
-          final captured = (event.capturedText ?? '').trim();
-          final nodes = (event.nodesText ?? []);
-          final combinedText = ((captured.isNotEmpty) ? captured : nodes.join(' ')).trim();
           final notifEntry = {
             "id": DateTime.now().millisecondsSinceEpoch.toString(),
             "app": pkg,
@@ -239,9 +237,6 @@ class _XcappPageState extends State<XcappPage>
           };
           notifLogs.insert(0, notifEntry);
           await _saveNotifLogs();
-
-          // auto-rule processing (NOTE: accessibility stream cannot reliably send reply; jadi kita hanya catat dan/atau post)
-          await _applyAutoResponseRules(event, combinedText);
 
           // post to remote if configured
           if (postUrl.isNotEmpty) {
@@ -258,11 +253,15 @@ class _XcappPageState extends State<XcappPage>
       setState(() => streamRunning = true);
       _showSnack("Stream accessibility dimulai");
       log("▶️ Accessibility stream started");
-    });
+    } catch (e, st) {
+      log("startStream error: $e\n$st");
+      _showSnack("Gagal memulai stream: $e");
+    }
   }
 
   void stopStream() {
     _subscription?.cancel();
+    _streamWatchTimer?.cancel();
     _saveStreamFlag(false);
     setState(() => streamRunning = false);
     _showSnack("Stream accessibility dihentikan");
@@ -390,70 +389,6 @@ class _XcappPageState extends State<XcappPage>
     }
   }
 
-  // -------------------- Auto-response rules --------------------
-  Future<void> _applyAutoResponseRules(AccessibilityEvent event, String combinedText) async {
-    try {
-      final pkg = event.packageName ?? '';
-      final text = combinedText;
-      for (var rule in autoRules) {
-        if (rule['enabled'] != true) continue;
-        final rulePkg = (rule['package'] ?? '').toString();
-        if (rulePkg.isNotEmpty && rulePkg != pkg) continue;
-        final pattern = (rule['pattern'] ?? '').toString();
-        if (pattern.isNotEmpty && !text.contains(pattern)) continue;
-        final responses = List<String>.from(rule['responses'] ?? []);
-        if (responses.isEmpty) continue;
-
-        // Karena accessibility stream tidak menyediakan API sendReply langsung,
-        // kita hanya mencatat bahwa rule ter-trigger. Jika ingin reply otomatis,
-        // perlu implementasi tambahan (NotificationListenerService + RemoteInput atau
-        // performAction pada node yang spesifik).
-        final arLog = {
-          "id": DateTime.now().millisecondsSinceEpoch.toString(),
-          "ruleId": rule['id'],
-          "package": pkg,
-          "in": text,
-          "responses": responses,
-          "note": "triggered_via_accessibility (no direct reply)",
-          "timestamp": DateTime.now().toIso8601String()
-        };
-
-        postLogs.insert(0, {
-          "id": arLog['id'],
-          "url": "auto-rule",
-          "body": json.encode(arLog),
-          "code": 0,
-          "response": "triggered",
-          "timestamp": arLog['timestamp']
-        });
-        await _savePostLogs();
-
-        // jika user ingin, kita juga bisa POST hasil rule ke server yang sama
-        if (postUrl.isNotEmpty) {
-          try {
-            final resp = await http.post(Uri.parse(postUrl),
-                headers: {"Content-Type": "application/json"},
-                body: json.encode({"type": "auto_rule_trigger", "data": arLog})).timeout(const Duration(seconds: 8));
-            postLogs.insert(0, {
-              "id": DateTime.now().millisecondsSinceEpoch.toString(),
-              "url": postUrl,
-              "body": json.encode(arLog),
-              "code": resp.statusCode,
-              "response": resp.body,
-              "timestamp": DateTime.now().toIso8601String()
-            });
-            await _savePostLogs();
-          } catch (e) {
-            log("Auto-rule post error: $e");
-          }
-        }
-        // jangan break — biarkan multiple rules apply
-      }
-    } catch (e) {
-      log("Error in auto rules: $e");
-    }
-  }
-
   // -------------------- UI helpers --------------------
   void _showSnack(String text) {
     if (!mounted) return;
@@ -505,7 +440,7 @@ class _XcappPageState extends State<XcappPage>
               Text("• Aksesibilitas harus diaktifkan oleh user di Settings (Request Permission akan membuka halaman setting)."), SizedBox(height: 6),
               Text("• Accessibility stream tidak selalu menyamai detail NotificationListener (contoh: icon, remoteReply langsung)."), SizedBox(height: 6),
               Text("• POST yang dikirim mengikuti JSON: { app, title, text, timestamp }"), SizedBox(height: 6),
-              Text("• Auto-response rules hanya trigger/record ketika match. Untuk auto-reply otomatis, butuh implementasi tambahan."),
+              Text("• Auto-reply / auto-send tidak termasuk di sini (hanya pencatatan & POST)."),
             ],
           ),
         ),
@@ -593,9 +528,10 @@ class _XcappPageState extends State<XcappPage>
     if (notif == null) return const SizedBox();
     final pkg = notif.packageName ?? 'unknown';
     final title = notif.eventType?.toString() ?? '(event)';
-    final captured = (notif.capturedText ?? '').trim();
-    final nodes = (notif.nodesText ?? []);
-    final content = (captured.isNotEmpty) ? captured : nodes.join(' ');
+    final captured = (notif.capturedText ?? '').toString().trim();
+    final nodesList = (notif.nodesText ?? <String>[]) as List<dynamic>;
+    final nodes = nodesList.map((e) => e?.toString() ?? '').join(' ');
+    final content = (captured.isNotEmpty) ? captured : nodes;
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -728,207 +664,6 @@ class _XcappPageState extends State<XcappPage>
     );
   }
 
-  // -------------------- Auto-response UI --------------------
-  Widget _buildAutoResponseTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(12),
-      child: Column(children: [
-        Card(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                const Text("Auto Response Rules", style: TextStyle(fontWeight: FontWeight.bold)),
-                ElevatedButton.icon(onPressed: () => _showAddRuleDialog(), icon: const Icon(Icons.add), label: const Text("Tambah Rule"))
-              ]),
-              const SizedBox(height: 8),
-              autoRules.isEmpty
-                  ? const Padding(padding: EdgeInsets.all(8), child: Text("Belum ada rule. Tekan 'Tambah Rule' untuk membuat."))
-                  : ListView.separated(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: autoRules.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (context, idx) {
-                        final r = autoRules[idx];
-                        final pkg = r['package'] ?? '(any)';
-                        final pat = r['pattern'] ?? '(any)';
-                        final enabled = r['enabled'] == true;
-                        final responses = List<String>.from(r['responses'] ?? []);
-                        return ListTile(
-                          title: Text("App: $pkg"),
-                          subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                            Text("Pattern: $pat"),
-                            const SizedBox(height: 4),
-                            Text("Responses: ${responses.join(' | ')}", maxLines: 2, overflow: TextOverflow.ellipsis)
-                          ]),
-                          trailing: Wrap(spacing: 8, children: [
-                            Switch(value: enabled, onChanged: (v) {
-                              setState(() {
-                                r['enabled'] = v;
-                              });
-                              _saveAutoRules();
-                            }),
-                            IconButton(icon: const Icon(Icons.edit), onPressed: () => _showEditRuleDialog(r)),
-                            IconButton(icon: const Icon(Icons.delete), onPressed: () => _deleteRule(r)),
-                          ]),
-                        );
-                      }),
-            ]),
-          ),
-        ),
-        const SizedBox(height: 12),
-        const Text("Contoh: untuk WhatsApp biasa package biasanya 'com.whatsapp', untuk WhatsApp Business 'com.whatsapp.w4b'. Pattern kosong = match semua. (Auto-reply perlu implementasi tambahan)."),
-      ]),
-    );
-  }
-
-  Future<void> _showAddRuleDialog() async {
-    final nameController = TextEditingController();
-    String selectedPkg = '';
-    String pattern = '';
-    final responsesController = TextEditingController();
-    // build list of package options from installedApps or common defaults
-    final pkgOptions = <Map<String, String>>[];
-    for (var a in installedApps) {
-      final nm = _extractAppName(a) ?? '';
-      final pkg = _extractPkgName(a) ?? '';
-      if (pkg.isNotEmpty) pkgOptions.add({"name": nm, "pkg": pkg});
-    }
-    // add common WhatsApp if not present
-    if (!pkgOptions.any((e) => e['pkg'] == 'com.whatsapp')) {
-      pkgOptions.insert(0, {"name": "WhatsApp", "pkg": "com.whatsapp"});
-    }
-    if (!pkgOptions.any((e) => e['pkg'] == 'com.whatsapp.w4b')) {
-      pkgOptions.insert(0, {"name": "WhatsApp Business", "pkg": "com.whatsapp.w4b"});
-    }
-
-    await showDialog(
-        context: context,
-        builder: (ctx) {
-          return AlertDialog(
-            title: const Text("Tambah Auto-Response Rule"),
-            content: SingleChildScrollView(
-              child: Column(children: [
-                DropdownButtonFormField<String>(
-                  value: selectedPkg.isEmpty ? null : selectedPkg,
-                  hint: const Text("Pilih Aplikasi (kosong = semua aplikasi)"),
-                  items: [
-                    const DropdownMenuItem(value: '', child: Text("Semua aplikasi (match pattern)")),
-                    ...pkgOptions.map((e) => DropdownMenuItem(value: e['pkg'], child: Text("${e['name']} (${e['pkg']})"))).toList()
-                  ],
-                  onChanged: (v) => selectedPkg = v ?? '',
-                ),
-                const SizedBox(height: 8),
-                TextFormField(
-                  decoration: const InputDecoration(hintText: "Pattern (kata/teks) - kosong = match semua", border: OutlineInputBorder()),
-                  onChanged: (v) => pattern = v,
-                ),
-                const SizedBox(height: 8),
-                TextFormField(
-                  controller: responsesController,
-                  maxLines: 4,
-                  decoration: const InputDecoration(hintText: "Responses (pisah baris untuk banyak) - hanya dicatat, tidak dikirim otomatis", border: OutlineInputBorder()),
-                ),
-              ]),
-            ),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Batal")),
-              ElevatedButton(
-                  onPressed: () {
-                    final responses = responsesController.text.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
-                    final newRule = {
-                      "id": DateTime.now().millisecondsSinceEpoch.toString(),
-                      "package": selectedPkg ?? '',
-                      "pattern": pattern ?? '',
-                      "responses": responses,
-                      "enabled": true
-                    };
-                    setState(() {
-                      autoRules.insert(0, newRule);
-                    });
-                    _saveAutoRules();
-                    Navigator.pop(ctx);
-                    _showSnack("Rule ditambahkan");
-                  },
-                  child: const Text("Simpan"))
-            ],
-          );
-        });
-  }
-
-  Future<void> _showEditRuleDialog(Map<String, dynamic> rule) async {
-    final responsesController = TextEditingController(text: (rule['responses'] as List<dynamic>?)?.join('\n') ?? '');
-    String selectedPkg = (rule['package'] ?? '').toString();
-    String pattern = (rule['pattern'] ?? '').toString();
-
-    final pkgOptions = <Map<String, String>>[];
-    for (var a in installedApps) {
-      final nm = _extractAppName(a) ?? '';
-      final pkg = _extractPkgName(a) ?? '';
-      if (pkg.isNotEmpty) pkgOptions.add({"name": nm, "pkg": pkg});
-    }
-    if (!pkgOptions.any((e) => e['pkg'] == 'com.whatsapp')) {
-      pkgOptions.insert(0, {"name": "WhatsApp", "pkg": "com.whatsapp"});
-    }
-    if (!pkgOptions.any((e) => e['pkg'] == 'com.whatsapp.w4b')) {
-      pkgOptions.insert(0, {"name": "WhatsApp Business", "pkg": "com.whatsapp.w4b"});
-    }
-
-    await showDialog(
-        context: context,
-        builder: (ctx) {
-          return AlertDialog(
-            title: const Text("Edit Auto-Response Rule"),
-            content: SingleChildScrollView(
-              child: Column(children: [
-                DropdownButtonFormField<String>(
-                  value: selectedPkg.isEmpty ? '' : selectedPkg,
-                  items: [
-                    const DropdownMenuItem(value: '', child: Text("Semua aplikasi (match pattern)")),
-                    ...pkgOptions.map((e) => DropdownMenuItem(value: e['pkg'], child: Text("${e['name']} (${e['pkg']})"))).toList()
-                  ],
-                  onChanged: (v) => selectedPkg = v ?? '',
-                ),
-                const SizedBox(height: 8),
-                TextFormField(
-                  initialValue: pattern,
-                  decoration: const InputDecoration(hintText: "Pattern (kata/teks) - kosong = match semua", border: OutlineInputBorder()),
-                  onChanged: (v) => pattern = v,
-                ),
-                const SizedBox(height: 8),
-                TextFormField(controller: responsesController, maxLines: 4, decoration: const InputDecoration(hintText: "Responses (pisah baris)", border: OutlineInputBorder())),
-              ]),
-            ),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Batal")),
-              ElevatedButton(
-                  onPressed: () {
-                    final responses = responsesController.text.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
-                    setState(() {
-                      rule['package'] = selectedPkg;
-                      rule['pattern'] = pattern;
-                      rule['responses'] = responses;
-                    });
-                    _saveAutoRules();
-                    Navigator.pop(ctx);
-                    _showSnack("Rule diupdate");
-                  },
-                  child: const Text("Simpan"))
-            ],
-          );
-        });
-  }
-
-  void _deleteRule(Map<String, dynamic> rule) {
-    setState(() {
-      autoRules.removeWhere((r) => r['id'] == rule['id']);
-    });
-    _saveAutoRules();
-    _showSnack("Rule dihapus");
-  }
-
   // -------------------- Logs UI --------------------
   Widget _buildLogsTab() {
     return SingleChildScrollView(
@@ -1048,12 +783,12 @@ class _XcappPageState extends State<XcappPage>
             labelColor: const Color(0xFF4A00E0),
             unselectedLabelColor: Colors.grey,
             indicatorColor: const Color(0xFF4A00E0),
-            tabs: const [Tab(text: "Menu"), Tab(text: "Notifikasi"), Tab(text: "Settings"), Tab(text: "Auto Response"), Tab(text: "Logs")],
+            tabs: const [Tab(text: "Menu"), Tab(text: "Notifikasi"), Tab(text: "Settings"), Tab(text: "Logs")],
           ),
           Expanded(
             child: TabBarView(
               controller: _tabController,
-              children: [_buildMenuTab(), _buildNotificationsTab(), _buildSettingsTab(), _buildAutoResponseTab(), _buildLogsTab()],
+              children: [_buildMenuTab(), _buildNotificationsTab(), _buildSettingsTab(), _buildLogsTab()],
             ),
           ),
         ]),
@@ -1065,6 +800,7 @@ class _XcappPageState extends State<XcappPage>
   @override
   void dispose() {
     _subscription?.cancel();
+    _streamWatchTimer?.cancel();
     _tabController.dispose();
     super.dispose();
   }
