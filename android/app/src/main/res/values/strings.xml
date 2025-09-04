@@ -16,6 +16,10 @@
         dan mengirimkan datanya ke server sesuai URL yang sudah Anda atur.
         Harap aktifkan layanan ini di Pengaturan → Notifikasi Akses.
     </string>
+    <!-- Tambahan agar tidak error di notification_config.xml -->
+    <string name="notification_accessibility_desc">
+        Mendengarkan notifikasi dari aplikasi lain untuk diproses oleh Xcreate.
+    </string>
 
     <!-- ========================================= -->
     <!-- Accessibility Service -->
@@ -33,6 +37,10 @@
     <string name="accessibility_service_instructions">
         Aktifkan "Xcreate Notif Accessibility" di menu 
         Pengaturan → Aksesibilitas agar aplikasi dapat bekerja dengan baik.
+    </string>
+    <!-- Tambahan agar tidak error di accessibility_config.xml -->
+    <string name="accessibility_desc">
+        Membaca konten aplikasi untuk fitur notifikasi dan log event.
     </string>
 
     <!-- ========================================= -->
