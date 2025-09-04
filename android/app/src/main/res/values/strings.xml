@@ -1,51 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- ========================================= -->
-    <!-- App Info -->
-    <!-- ========================================= -->
     <string name="app_name">Xcreate Member</string>
 
-    <!-- ========================================= -->
-    <!-- Notification Listener -->
-    <!-- ========================================= -->
-    <string name="notification_service_label">
-        Xcreate Notification Listener
-    </string>
-    <string name="notification_service_description">
-        Layanan ini digunakan untuk membaca semua notifikasi dari perangkat 
-        dan mengirimkan datanya ke server sesuai URL yang sudah Anda atur.
-        Harap aktifkan layanan ini di Pengaturan → Notifikasi Akses.
-    </string>
-    <!-- Tambahan agar tidak error di notification_config.xml -->
-    <string name="notification_accessibility_desc">
-        Mendengarkan notifikasi dari aplikasi lain untuk diproses oleh Xcreate.
-    </string>
+    <!-- Notification listener -->
+    <string name="notification_service_label">Xcreate Notification Listener</string>
+    <string name="notification_service_description">Layanan ini digunakan untuk membaca semua notifikasi perangkat dan mengirimkannya ke server yang Anda set.</string>
+    <string name="notification_accessibility_desc">Izinkan akses notifikasi untuk Xcreate Notification Listener.</string>
 
-    <!-- ========================================= -->
-    <!-- Accessibility Service -->
-    <!-- ========================================= -->
-    <string name="accessibility_service_label">
-        Xcreate Notif Accessibility
-    </string>
-    <string name="accessibility_service_description">
-        Layanan ini digunakan untuk menangkap event aksesibilitas dan notifikasi,
-        kemudian menyimpan log ke penyimpanan lokal (SharedPreferences) 
-        sekaligus mengirimkan data ke server.
-        Aktifkan di Pengaturan → Aksesibilitas agar aplikasi tetap berjalan
-        walaupun ditutup.
-    </string>
-    <string name="accessibility_service_instructions">
-        Aktifkan "Xcreate Notif Accessibility" di menu 
-        Pengaturan → Aksesibilitas agar aplikasi dapat bekerja dengan baik.
-    </string>
-    <!-- Tambahan agar tidak error di accessibility_config.xml -->
-    <string name="accessibility_desc">
-        Membaca konten aplikasi untuk fitur notifikasi dan log event.
-    </string>
+    <!-- Accessibility service 1 (general) -->
+    <string name="accessibility_service_label">Xcreate Notif Accessibility</string>
+    <string name="accessibility_service_description">Layanan ini membaca event aksesibilitas & notifikasi lalu menyimpan/POST ke server.</string>
+    <string name="accessibility_desc">Aktifkan Xcreate Notif Accessibility di Pengaturan → Aksesibilitas.</string>
 
-    <!-- ========================================= -->
-    <!-- General Messages -->
-    <!-- ========================================= -->
+    <!-- Accessibility service 2 (notification-focused) -->
+    <string name="accessibility_service_label_notif">Xcreate Notif (Notification)</string>
+    <string name="accessibility_service_description_notif">Layanan khusus notifikasi untuk meng-capture data notifikasi dan mengirimkannya.</string>
+    <string name="notification_accessibility_description">Aktifkan Xcreate Notif (Notification) di Pengaturan → Aksesibilitas.</string>
+
+    <!-- General messages -->
     <string name="service_running">Layanan sedang berjalan…</string>
     <string name="service_stopped">Layanan berhenti</string>
     <string name="error_no_url">URL tujuan belum diatur</string>
