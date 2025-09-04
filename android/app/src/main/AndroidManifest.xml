@@ -16,26 +16,23 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <!-- Protected / bind permissions (tool ignore untuk lint) -->
+    <!-- Protected permissions -->
     <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
 
     <!-- ========================================= -->
-    <!-- Queries / package visibility -->
+    <!-- Queries (package visibility) -->
     <!-- ========================================= -->
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
-
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT" />
             <data android:mimeType="text/plain" />
         </intent>
-
-        <!-- contoh package yang sering dimonitor -->
         <package android:name="com.whatsapp" />
         <package android:name="com.whatsapp.w4b" />
         <package android:name="org.telegram.messenger" />
@@ -52,7 +49,7 @@
         android:usesCleartextTraffic="true"
         tools:replace="android:allowBackup">
 
-        <!-- ---------------- MainActivity (Flutter) ---------------- -->
+        <!-- MainActivity (Flutter) -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -66,13 +63,11 @@
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme" />
 
-            <!-- launcher -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- deep link -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -81,13 +76,13 @@
             </intent-filter>
         </activity>
 
-        <!-- ---------------- Foreground service used by flutter_foreground_task ---------------- -->
+        <!-- Foreground service (flutter_foreground_task plugin) -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
             android:foregroundServiceType="dataSync|connectedDevice|mediaProjection"
             android:exported="false" />
 
-        <!-- ---------------- NotificationListenerService (native) ---------------- -->
+        <!-- NotificationListenerService (native) -->
         <service
             android:name=".MyNotificationListenerService"
             android:label="@string/notification_service_label"
@@ -98,47 +93,34 @@
             </intent-filter>
         </service>
 
-        <!-- ---------------- Accessibility Service (plugin) ----------------
-             Plugin class (pakai package dari flutter_accessibility_service plugin)
-             Nama class harus sesuai plugin; jika berbeda, sesuaikan. -->
-        <service
-            android:name="slayer.accessibility.service.flutter_accessibility_service.FlutterAccessibilityService"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:exported="true"
-            android:label="@string/accessibility_service_label_plugin">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_service_config_plugin" />
-        </service>
-
-        <!-- ---------------- Accessibility Service (native) ---------------- -->
+        <!-- AccessibilityService #1 -->
         <service
             android:name=".MyAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
             android:exported="true"
-            android:label="@string/accessibility_service_label_native">
+            android:label="@string/accessibility_service_label">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
             </intent-filter>
             <meta-data
                 android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_service_config_native" />
+                android:resource="@xml/accessibility_config" />
         </service>
 
-        <!-- Optional: BroadcastReceiver untuk boot (jika mau auto-start FG service) -->
-        <receiver android:name=".BootReceiver"
-                  android:enabled="true"
-                  android:exported="true">
+        <!-- AccessibilityService #2 (separate entry so Android Settings shows two services) -->
+        <service
+            android:name=".MyAccessibilityServiceNotif"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="true"
+            android:label="@string/accessibility_service_label_notif">
             <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.accessibilityservice.AccessibilityService" />
             </intent-filter>
-        </receiver>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_config_notif" />
+        </service>
 
-        <!-- Flutter embedding v2 -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
