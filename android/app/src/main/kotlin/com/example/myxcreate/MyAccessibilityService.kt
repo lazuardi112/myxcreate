@@ -26,20 +26,15 @@ class MyAccessibilityService : AccessibilityService() {
 
         val eventText = event.text?.joinToString(" ") ?: ""
         val pkgName = event.packageName?.toString() ?: "unknown"
-        val timestamp =
-            SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+        val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
 
         val logEntry = "[$timestamp][$pkgName] $eventText"
-
-        // Simpan log ke SharedPreferences
         saveLogToPrefs(prefs, logEntry)
 
         if (!postUrl.isNullOrEmpty() && eventText.isNotEmpty()) {
-            // Jalankan POST di background
             serviceScope.launch {
                 try {
-                    val payload =
-                        """{"package":"$pkgName","text":"$eventText","time":"$timestamp"}"""
+                    val payload = """{"package":"$pkgName","text":"$eventText","time":"$timestamp"}"""
                     val mediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
                     val body = payload.toRequestBody(mediaType)
 
@@ -68,21 +63,19 @@ class MyAccessibilityService : AccessibilityService() {
     }
 
     private fun saveLogToPrefs(prefs: SharedPreferences, log: String) {
-        val logs =
-            prefs.getStringSet("notif_logs", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
+        val logs = prefs.getStringSet("notif_logs", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
         logs.add(log)
         prefs.edit().putStringSet("notif_logs", logs).apply()
     }
 
     private fun savePostLogToPrefs(prefs: SharedPreferences, log: String) {
-        val logs =
-            prefs.getStringSet("post_logs", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
+        val logs = prefs.getStringSet("post_logs", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
         logs.add(log)
         prefs.edit().putStringSet("post_logs", logs).apply()
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        serviceScope.cancel() // pastikan coroutine berhenti
+        serviceScope.cancel()
     }
 }
