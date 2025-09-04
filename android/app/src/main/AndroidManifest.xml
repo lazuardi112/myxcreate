@@ -9,36 +9,29 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.CAMERA" />
-    <!-- Android 13+ runtime will ask POST_NOTIFICATIONS when needed -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
-    <!-- Agar bisa auto-start FG service setelah boot (opsional) -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <!-- Listener & Accessibility permissions (protected permissions) -->
+    <!-- Protected permissions -->
     <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
 
     <!-- ========================================= -->
-    <!-- Queries untuk package tertentu -->
+    <!-- Queries (package visibility) -->
     <!-- ========================================= -->
     <queries>
-        <!-- Agar bisa tampil di launcher -->
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
-
-        <!-- Untuk share teks -->
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT" />
             <data android:mimeType="text/plain" />
         </intent>
-
-        <!-- Spesifik apps WA & Telegram -->
         <package android:name="com.whatsapp" />
         <package android:name="com.whatsapp.w4b" />
         <package android:name="org.telegram.messenger" />
@@ -55,9 +48,7 @@
         android:usesCleartextTraffic="true"
         tools:replace="android:allowBackup">
 
-        <!-- ========================================= -->
         <!-- MainActivity (Flutter) -->
-        <!-- ========================================= -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -67,18 +58,17 @@
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
 
-            <!-- Tema bawaan Flutter -->
             <meta-data
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme" />
 
-            <!-- Entry point utama -->
+            <!-- Entry point -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Deep link ke https://xcreate.my.id -->
+            <!-- Deep link -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -87,18 +77,13 @@
             </intent-filter>
         </activity>
 
-        <!-- ========================================= -->
-        <!-- Foreground service untuk background task (flutter_foreground_task) -->
-        <!-- ========================================= -->
+        <!-- Foreground service -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
             android:foregroundServiceType="dataSync|connectedDevice|mediaProjection"
             android:exported="false" />
 
-        <!-- ========================================= -->
-        <!-- NotificationListenerService (native) -->
-        <!-- Implementasikan NotificationListener.java/kt di folder java/kt -->
-        <!-- ========================================= -->
+        <!-- NotificationListenerService -->
         <service
             android:name=".NotificationListener"
             android:label="@string/notification_service_label"
@@ -109,10 +94,7 @@
             </intent-filter>
         </service>
 
-        <!-- ========================================= -->
-        <!-- AccessibilityService (native) -->
-        <!-- Implementasikan MyAccessibilityService.java/kt di folder java/kt -->
-        <!-- ========================================= -->
+        <!-- AccessibilityService -->
         <service
             android:name=".MyAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
@@ -121,16 +103,12 @@
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
             </intent-filter>
-
-            <!-- meta-data menunjuk ke file XML konfigurasi di res/xml -->
             <meta-data
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
-        <!-- ========================================= -->
-        <!-- Flutter embedding -->
-        <!-- ========================================= -->
+        <!-- Flutter embedding v2 -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
