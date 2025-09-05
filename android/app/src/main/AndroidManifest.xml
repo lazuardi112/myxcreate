@@ -3,9 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     package="com.example.myxcreate">
 
-    <!-- ========================================= -->
-    <!-- Permissions -->
-    <!-- ========================================= -->
+    <!-- PERMISSIONS -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
@@ -16,14 +14,12 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <!-- Protected permissions -->
+    <!-- Protected -->
     <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
 
-    <!-- ========================================= -->
-    <!-- Queries (package visibility) -->
-    <!-- ========================================= -->
+    <!-- QUERIES -->
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -38,9 +34,6 @@
         <package android:name="org.telegram.messenger" />
     </queries>
 
-    <!-- ========================================= -->
-    <!-- Application -->
-    <!-- ========================================= -->
     <application
         android:name="${applicationName}"
         android:label="@string/app_name"
@@ -49,7 +42,7 @@
         android:usesCleartextTraffic="true"
         tools:replace="android:allowBackup">
 
-        <!-- MainActivity (Flutter) -->
+        <!-- MainActivity -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -76,7 +69,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Foreground service (flutter_foreground_task plugin) -->
+        <!-- Foreground service (plugin) -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
             android:foregroundServiceType="dataSync|connectedDevice|mediaProjection"
@@ -93,32 +86,36 @@
             </intent-filter>
         </service>
 
-        <!-- AccessibilityService #1 -->
+        <!-- Accessibility service provided by the flutter_accessibility_service plugin.
+             IMPORTANT: the plugin (flutter_accessibility_service) provides a service class.
+             If you omit this, plugin's accessStream may not emit events.
+             Replace the className below if plugin docs specify another package/class name.
+        -->
+        <service
+            android:name="slayer.accessibility.service.flutter_accessibility_service.FlutterAccessibilityService"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="true"
+            android:label="@string/accessibility_service_label_plugin">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_config_plugin" />
+        </service>
+
+        <!-- Optional: Your custom accessibility service (separate) -->
         <service
             android:name=".MyAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
             android:exported="true"
-            android:label="@string/accessibility_service_label">
+            android:label="@string/accessibility_service_label_custom">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
             </intent-filter>
             <meta-data
                 android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_config" />
-        </service>
-
-        <!-- AccessibilityService #2 (separate entry so Android Settings shows two services) -->
-        <service
-            android:name=".MyAccessibilityServiceNotif"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:exported="true"
-            android:label="@string/accessibility_service_label_notif">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_config_notif" />
+                android:resource="@xml/accessibility_config_custom" />
         </service>
 
         <meta-data
