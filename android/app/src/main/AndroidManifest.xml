@@ -3,7 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     package="com.example.myxcreate">
 
-    <!-- PERMISSIONS -->
+    <!-- ========== PERMISSIONS ========== -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
@@ -14,12 +14,13 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <!-- Protected (special binding permissions) -->
-    <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+    <!-- Protected permissions (special binding) -->
+    <uses-permission
+        android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
 
-    <!-- QUERIES (package visibility) -->
+    <!-- ========== QUERIES (package visibility) ========== -->
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -29,11 +30,13 @@
             <action android:name="android.intent.action.PROCESS_TEXT" />
             <data android:mimeType="text/plain" />
         </intent>
+        <!-- Apps yang di-handle -->
         <package android:name="com.whatsapp" />
         <package android:name="com.whatsapp.w4b" />
         <package android:name="org.telegram.messenger" />
     </queries>
 
+    <!-- ========== APPLICATION ========== -->
     <application
         android:name="${applicationName}"
         android:label="@string/app_name"
@@ -42,7 +45,7 @@
         android:usesCleartextTraffic="true"
         tools:replace="android:allowBackup">
 
-        <!-- Main Activity (Flutter) -->
+        <!-- ===== Main Activity (Flutter) ===== -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -51,7 +54,9 @@
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
-            <meta-data android:name="io.flutter.embedding.android.NormalTheme" android:resource="@style/NormalTheme" />
+            <meta-data
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
@@ -64,13 +69,13 @@
             </intent-filter>
         </activity>
 
-        <!-- Foreground service used by plugin flutter_foreground_task -->
+        <!-- ===== Foreground service (flutter_foreground_task) ===== -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
             android:foregroundServiceType="dataSync|connectedDevice|mediaProjection"
-            android:exported="false"/>
+            android:exported="false" />
 
-        <!-- NotificationListenerService (native) -->
+        <!-- ===== NotificationListenerService (native) ===== -->
         <service
             android:name=".MyNotificationListenerService"
             android:label="@string/notification_service_label"
@@ -81,11 +86,7 @@
             </intent-filter>
         </service>
 
-        <!-- Accessibility service provided by flutter_accessibility_service plugin.
-             IMPORTANT: plugin's service class must be registered here and point to a valid xml config file.
-             The class name below matches the plugin published implementation (common case). If plugin changes,
-             check plugin README to confirm the class name.
-        -->
+        <!-- ===== Accessibility service (Flutter plugin) ===== -->
         <service
             android:name="slayer.accessibility.service.flutter_accessibility_service.FlutterAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
@@ -99,7 +100,7 @@
                 android:resource="@xml/accessibility_config_plugin" />
         </service>
 
-        <!-- Optional: custom native AccessibilityService (if you want a native one as well) -->
+        <!-- ===== Accessibility service (custom native) ===== -->
         <service
             android:name=".MyAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
@@ -113,7 +114,7 @@
                 android:resource="@xml/accessibility_config_custom" />
         </service>
 
-        <!-- Optional: a second accessibility entry (for notif-specific mode) -->
+        <!-- ===== Accessibility service (notif-specific) ===== -->
         <service
             android:name=".MyAccessibilityServiceNotif"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
@@ -127,6 +128,7 @@
                 android:resource="@xml/accessibility_config_notif" />
         </service>
 
+        <!-- Meta-data for Flutter embedding -->
         <meta-data android:name="flutterEmbedding" android:value="2" />
     </application>
 </manifest>
