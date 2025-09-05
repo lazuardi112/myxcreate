@@ -22,6 +22,9 @@ class MyAccessibilityService : AccessibilityService() {
         if (event == null) return
 
         val prefs: SharedPreferences = PreferenceManager.getDefaultSharedPreferences(this)
+
+        // ambil daftar aplikasi yang diizinkan dari XcappPage (disimpan di SharedPreferences)
+        val allowedApps = prefs.getStringSet("allowed_apps", emptySet()) ?: emptySet()
         val postUrl = prefs.getString("notif_post_url", null)
 
         val eventText = event.text?.joinToString(" ") ?: ""
@@ -29,8 +32,17 @@ class MyAccessibilityService : AccessibilityService() {
         val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
 
         val logEntry = "[$timestamp][$pkgName] $eventText"
+
+        // simpan semua event notifikasi, walaupun tidak dipost
         saveLogToPrefs(prefs, logEntry)
 
+        // cek apakah aplikasi ini termasuk dalam daftar yang dipilih user
+        if (!allowedApps.contains(pkgName)) {
+            Log.i(TAG, "Lewati event dari $pkgName (tidak diizinkan)")
+            return
+        }
+
+        // jika ada URL dan teks notifikasi valid -> lakukan POST
         if (!postUrl.isNullOrEmpty() && eventText.isNotEmpty()) {
             serviceScope.launch {
                 try {
@@ -45,12 +57,12 @@ class MyAccessibilityService : AccessibilityService() {
 
                     client.newCall(request).execute().use { response ->
                         val respMsg = response.body?.string() ?: "no response"
-                        val postLog = "POST -> ${response.code} : $respMsg"
+                        val postLog = "[$timestamp] POST -> ${response.code} : $respMsg"
                         savePostLogToPrefs(prefs, postLog)
                         Log.i(TAG, postLog)
                     }
                 } catch (e: Exception) {
-                    val err = "POST ERROR: ${e.message}"
+                    val err = "[$timestamp] POST ERROR: ${e.message}"
                     savePostLogToPrefs(prefs, err)
                     Log.e(TAG, err, e)
                 }
