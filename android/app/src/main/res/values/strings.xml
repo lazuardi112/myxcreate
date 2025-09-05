@@ -1,18 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- App Name -->
     <string name="app_name">XCreate Member</string>
 
     <!-- Notification listener -->
     <string name="notification_service_label">XCreate Notification Listener</string>
     <string name="notification_service_description">Layanan untuk membaca notifikasi dan (opsional) mengirim ke server Anda.</string>
+    <string name="notification_accessibility_desc">Layanan ini digunakan untuk membaca notifikasi aplikasi.</string>
 
     <!-- Accessibility labels/descriptions -->
     <string name="accessibility_service_label_plugin">XCreate Accessibility (plugin)</string>
     <string name="accessibility_service_label_custom">XCreate Notif Accessibility (custom)</string>
 
+    <!-- Plugin & custom descriptions -->
     <string name="accessibility_service_description_plugin">Layanan accessibility yang disediakan oleh plugin untuk membaca event dan meneruskannya ke Flutter.</string>
     <string name="accessibility_service_description_custom">Layanan accessibility custom untuk kebutuhan tambahan (jika dipakai).</string>
 
+    <!-- General accessibility descriptions -->
+    <string name="accessibility_desc">Aksesibilitas untuk aplikasi</string>
+    <string name="accessibility_service_description">Layanan aksesibilitas digunakan untuk mengontrol interaksi otomatis.</string>
     <string name="accessibility_service_instructions">Aktifkan layanan XCreate di Pengaturan → Aksesibilitas.</string>
 
     <!-- small strings -->
