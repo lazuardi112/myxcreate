@@ -1,29 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- App Name -->
     <string name="app_name">XCreate Member</string>
 
     <!-- Notification listener -->
     <string name="notification_service_label">XCreate Notification Listener</string>
-    <string name="notification_service_description">Layanan untuk membaca notifikasi dan (opsional) mengirim ke server Anda.</string>
-    <string name="notification_accessibility_desc">Layanan ini digunakan untuk membaca notifikasi aplikasi.</string>
+    <string name="notification_service_description">Layanan untuk membaca notifikasi dan mengirim ke server (opsional).</string>
 
-    <!-- Accessibility labels/descriptions -->
+    <!-- Accessibility labels -->
     <string name="accessibility_service_label_plugin">XCreate Accessibility (plugin)</string>
     <string name="accessibility_service_label_custom">XCreate Notif Accessibility (custom)</string>
+    <string name="accessibility_service_label_notif">XCreate Notif Accessibility (notif)</string>
 
-    <!-- Plugin & custom descriptions -->
-    <string name="accessibility_service_description_plugin">Layanan accessibility yang disediakan oleh plugin untuk membaca event dan meneruskannya ke Flutter.</string>
-    <string name="accessibility_service_description_custom">Layanan accessibility custom untuk kebutuhan tambahan (jika dipakai).</string>
+    <string name="accessibility_service_description_plugin">Layanan accessibility dari plugin. Digunakan untuk meneruskan event ke Flutter.</string>
+    <string name="accessibility_service_description_custom">Layanan accessibility custom (native).</string>
+    <string name="accessibility_service_description_notif">Layanan accessibility khusus notifikasi.</string>
 
-    <!-- General accessibility descriptions -->
-    <string name="accessibility_desc">Aksesibilitas untuk aplikasi</string>
-    <string name="accessibility_service_description">Layanan aksesibilitas digunakan untuk mengontrol interaksi otomatis.</string>
     <string name="accessibility_service_instructions">Aktifkan layanan XCreate di Pengaturan → Aksesibilitas.</string>
+    <string name="accessibility_desc">XCreate Accessibility — membaca event untuk fitur notifikasi.</string>
+    <string name="notification_accessibility_desc">XCreate Notification Accessibility — baca notifikasi untuk fitur pengiriman.</string>
 
     <!-- small strings -->
     <string name="service_running">Layanan sedang berjalan…</string>
     <string name="service_stopped">Layanan berhenti</string>
     <string name="error_no_url">URL belum diatur</string>
     <string name="saved_success">Data berhasil disimpan</string>
+    <string name="post_success">Notifikasi berhasil dikirim</string>
+    <string name="post_failed">Gagal mengirim data</string>
 </resources>
