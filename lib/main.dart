@@ -4,6 +4,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'package:myxcreate/auth/login.dart';
 import 'package:myxcreate/main_page.dart';
@@ -29,15 +30,17 @@ import 'package:app_links/app_links.dart';
 // Foreground task
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
-// Accessibility Service
-import 'package:flutter_accessibility_service/accessibility_event.dart';
-import 'package:flutter_accessibility_service/flutter_accessibility_service.dart';
-
 /// API Cek Versi
 const String apiUrl = "https://api.xcreate.my.id/myxcreate/cek_update_apk.php";
 
 /// Global navigator key
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+// Platform channels (native side must implement)
+const EventChannel _accessEventChannel =
+    EventChannel('com.example.myxcreate/accessibility_events');
+const MethodChannel _accessMethodChannel =
+    MethodChannel('com.example.myxcreate/accessibility');
 
 @pragma('vm:entry-point')
 void accessibilityOverlay() {
@@ -316,7 +319,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
-/// DeepLink Wrapper + Accessibility listener
+/// DeepLink Wrapper + Accessibility listener (native -> Flutter via EventChannel)
 class DeepLinkWrapper extends StatefulWidget {
   final Widget initialPage;
   const DeepLinkWrapper({super.key, required this.initialPage});
@@ -328,7 +331,7 @@ class DeepLinkWrapper extends StatefulWidget {
 class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
   late final AppLinks _appLinks;
   Uri? _pendingUri;
-  StreamSubscription<AccessibilityEvent?>? _accessSub;
+  StreamSubscription<dynamic>? _accessSub;
 
   @override
   void initState() {
@@ -351,22 +354,29 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
 
   Future<void> _initAccessibilityListener() async {
     try {
-      debugPrint('[ACC] Memeriksa permission accessibility...');
-      final enabled =
-          await FlutterAccessibilityService.isAccessibilityPermissionEnabled();
-      if (!enabled) {
-        debugPrint('[ACC] Permission belum diberikan. Meminta user memberi izin...');
-        final granted =
-            await FlutterAccessibilityService.requestAccessibilityPermission();
-        debugPrint('[ACC] Hasil request permission: $granted');
-        if (!granted) {
-          debugPrint('[ACC] User belum mengaktifkan accessibility, skip listen');
-          return;
-        }
-      } else {
-        debugPrint('[ACC] Accessibility permission sudah aktif.');
+      debugPrint('[ACC] Memeriksa permission accessibility (native)...');
+      bool enabled = false;
+      try {
+        final res = await _accessMethodChannel.invokeMethod('isAccessibilityEnabled');
+        if (res is bool) enabled = res;
+      } catch (e) {
+        debugPrint('[ACC] isAccessibilityEnabled method error: $e');
       }
 
+      if (!enabled) {
+        debugPrint('[ACC] Permission belum diberikan. Meminta user membuka Settings Aksesibilitas...');
+        try {
+          await _accessMethodChannel.invokeMethod('openAccessibilitySettings');
+        } catch (e) {
+          debugPrint('[ACC] openAccessibilitySettings error: $e');
+        }
+        // Setelah membuka settings, kita tidak otomatis menganggap diaktifkan.
+        return;
+      } else {
+        debugPrint('[ACC] Accessibility native permission sudah aktif.');
+      }
+
+      // Mulai listen stream accessibility dari native
       _startAccessibilityStream();
     } catch (e, st) {
       debugPrint('[ACC] Error inisialisasi accessibility: $e\n$st');
@@ -375,62 +385,92 @@ class _DeepLinkWrapperState extends State<DeepLinkWrapper> {
 
   void _startAccessibilityStream() {
     try {
+      // cancel jika sudah ada
       _accessSub?.cancel();
 
-      _accessSub =
-          FlutterAccessibilityService.accessStream.listen((event) async {
-        final title = event.packageName ?? '(unknown)';
-        final text = _extractTextFromEvent(event);
+      // subscribe ke EventChannel (native harus mengirim Map JSON)
+      _accessSub = _accessEventChannel.receiveBroadcastStream().listen((event) async {
+        try {
+          if (event == null) return;
 
-        final mapped = {
-          'title': title,
-          'text': text,
-          'raw_event': event.toString(),
-        };
+          // event diharapkan Map atau JSON-serializable map:
+          // { "packageName": "com.whatsapp", "text": "...", "nodes": [...], "capturedText":"...", "eventType":"TYPE_NOTIFICATION" }
+          final Map<String, dynamic> ev = _normalizeEvent(event);
 
-        debugPrint('[ACC] Event -> title: $title, text-length: ${text.length}');
-        await _handleIncomingNotification(mapped);
+          final title = (ev['packageName'] ?? ev['package'] ?? '(unknown)').toString();
+          final text = _extractTextFromEvent(ev);
+
+          final mapped = {
+            'title': title,
+            'text': text,
+            'raw_event': ev,
+          };
+
+          debugPrint('[ACC] Event -> title: $title, text-length: ${text.length}');
+          await _handleIncomingNotification(mapped);
+        } catch (e, st) {
+          debugPrint('[ACC] Error handling accessibility event: $e\n$st');
+        }
       }, onError: (err) {
         debugPrint('[ACC] Error stream accessibility: $err');
       }, cancelOnError: false);
 
-      debugPrint('[ACC] Accessibility stream started.');
+      debugPrint('[ACC] Accessibility EventChannel listener started.');
     } catch (e, st) {
       debugPrint('[ACC] Gagal mulai accessibility stream: $e\n$st');
     }
   }
 
-  /// Ambil teks dari AccessibilityEvent dengan aman.
-  String _extractTextFromEvent(AccessibilityEvent event) {
+  /// Normalize berbagai kemungkinan tipe event dari native -> Map<String,dynamic>
+  Map<String, dynamic> _normalizeEvent(dynamic raw) {
     try {
-      // 1) Cek `text` (bisa List atau String tergantung versi)
-      final dynText = (event as dynamic).text;
-      if (dynText != null) {
-        if (dynText is String) return dynText;
-        if (dynText is List) return dynText.map((e) => e?.toString() ?? '').join(' ');
-        return dynText.toString();
+      if (raw is Map) {
+        return raw.map((k, v) => MapEntry(k.toString(), v));
       }
-
-      // 2) capturedText (plugin kadang expose ini)
-      final captured = (event as dynamic).capturedText;
-      if (captured != null && captured.toString().isNotEmpty) return captured.toString();
-
-      // 3) nodesText (bisa List)
-      final nodes = (event as dynamic).nodesText;
-      if (nodes != null) {
-        if (nodes is List) return nodes.map((e) => e?.toString() ?? '').join(' ');
-        return nodes.toString();
+      if (raw is String) {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) return decoded.map((k, v) => MapEntry(k.toString(), v));
       }
-
-      // 4) contentDescription (jika tersedia)
-      final cd = (event as dynamic).contentDescription;
-      if (cd != null) return cd.toString();
-
-      // 5) fallback ke eventType
-      return event.eventType?.toString() ?? '';
+      // fallback: wrap into map
+      return {'raw': raw.toString()};
     } catch (e) {
-      // jika error, kembalikan eventType
-      return event.eventType?.toString() ?? '';
+      return {'raw': raw.toString()};
+    }
+  }
+
+  /// Extract text from normalized event Map
+  String _extractTextFromEvent(Map<String, dynamic> ev) {
+    try {
+      // 1) prefer explicit 'text'
+      final dynamic textField = ev['text'] ?? ev['message'] ?? ev['body'];
+      if (textField != null) {
+        if (textField is String && textField.trim().isNotEmpty) return textField.trim();
+        if (textField is List) return textField.map((e) => e?.toString() ?? '').join(' ').trim();
+        return textField.toString().trim();
+      }
+
+      // 2) capturedText
+      final captured = ev['capturedText'] ?? ev['captured'] ?? ev['content'];
+      if (captured != null && captured.toString().trim().isNotEmpty) return captured.toString().trim();
+
+      // 3) nodes (array of strings)
+      final nodes = ev['nodes'] ?? ev['nodesText'] ?? ev['views'];
+      if (nodes != null) {
+        if (nodes is List) return nodes.map((e) => e?.toString() ?? '').join(' ').trim();
+        return nodes.toString().trim();
+      }
+
+      // 4) contentDescription
+      final cd = ev['contentDescription'] ?? ev['desc'];
+      if (cd != null && cd.toString().trim().isNotEmpty) return cd.toString().trim();
+
+      // fallback to eventType if present
+      final et = ev['eventType'] ?? ev['type'];
+      if (et != null) return et.toString();
+
+      return '';
+    } catch (e) {
+      return '';
     }
   }
 
