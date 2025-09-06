@@ -1,4 +1,7 @@
 // FILE: lib/xcapp_page.dart
+// Updated: Integrasi & konfigurasi untuk flutter_accessibility_service
+// Catatan: lihat bagian bawah dokumen untuk petunjuk Android (AndroidManifest + res/xml)
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
@@ -9,22 +12,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:http/http.dart' as http;
 import 'package:installed_apps/installed_apps.dart';
-import 'package:flutter/services.dart';
 
-/// NOTE:
-/// This file no longer depends on `flutter_accessibility_service`.
-/// Instead it expects native Android code (AccessibilityService / NotificationListener)
-/// to send events to Flutter via an EventChannel:
-///
-///   EventChannel('myxcreate/accessibility_events')
-///
-/// and to expose MethodChannel calls for:
-///   MethodChannel('myxcreate/accessibility') methods:
-///     - 'isAccessibilityPermissionEnabled' -> bool
-///     - 'requestAccessibilityPermission' -> bool (or null)
-///     - 'openAccessibilitySettings' -> void
-///
-/// See bottom of this file for short native instructions.
+// menggunakan accessibility service
+import 'package:flutter_accessibility_service/accessibility_event.dart';
+import 'package:flutter_accessibility_service/flutter_accessibility_service.dart';
 
 class XcappPage extends StatefulWidget {
   const XcappPage({super.key});
@@ -35,16 +26,9 @@ class XcappPage extends StatefulWidget {
 
 class _XcappPageState extends State<XcappPage>
     with SingleTickerProviderStateMixin {
-  // --- Channels
-  static const MethodChannel _accMethod =
-      MethodChannel('myxcreate/accessibility'); // native method calls
-  static const EventChannel _accEvents =
-      EventChannel('myxcreate/accessibility_events'); // native events
-
   String username = "User";
-
-  StreamSubscription<dynamic?>? _subscription;
-  List<dynamic?> events = [];
+  StreamSubscription<AccessibilityEvent?>? _subscription;
+  List<AccessibilityEvent?> events = [];
 
   late TabController _tabController;
 
@@ -56,18 +40,32 @@ class _XcappPageState extends State<XcappPage>
   bool loadingApps = false;
 
   // logs
-  List<Map<String, dynamic>> notifLogs = [];
-  List<Map<String, dynamic>> postLogs = [];
+  List<Map<String, dynamic>> notifLogs = []; // {id, app, title, text, timestamp}
+  List<Map<String, dynamic>> postLogs = []; // {id, url, body, code, response, timestamp}
 
   // helper untuk mendeteksi apakah stream benar-benar mengirim event
   bool _gotFirstEvent = false;
   Timer? _streamWatchTimer;
 
+  // polling untuk cek apakah permission/bind sudah aktif setelah request
+  Timer? _permissionPollingTimer;
+  int _permissionPollAttempts = 0;
+  static const int _permissionPollMaxAttempts = 20; // ~20 * 500ms = 10s
+
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 4, vsync: this); // Menu, Notifikasi, Settings, Logs
     _loadAllSettings();
+
+    // cek periodik background: jika permission aktif tapi streamRunning false, show hint (non-intrusive)
+    Timer.periodic(const Duration(seconds: 12), (_) async {
+      final enabled = await FlutterAccessibilityService.isAccessibilityPermissionEnabled();
+      if (enabled && !streamRunning) {
+        // kita tidak auto-start di sini; hanya log/hint
+        log('[ACC POLL] Accessibility permission ON but streamRunning=false');
+      }
+    });
   }
 
   Future<void> _loadAllSettings() async {
@@ -177,7 +175,7 @@ class _XcappPageState extends State<XcappPage>
 
   // -------------------- Permission handling --------------------
   Future<void> requestPermission() async {
-    // Android 13 runtime notifications permission (tidak wajib untuk accessibility)
+    // Android runtime notification permission (Android 13+)
     if (await Permission.notification.isDenied) {
       final res = await Permission.notification.request();
       final ok = res.isGranted;
@@ -187,41 +185,42 @@ class _XcappPageState extends State<XcappPage>
       _showSnack("Permission notifikasi sudah aktif");
     }
 
-    // Request Accessibility permission via native method (opens settings)
-    try {
-      final granted =
-          await _accMethod.invokeMethod<bool>('requestAccessibilityPermission') ?? false;
-      _showSnack(granted ? "Akses accessibility diaktifkan" : "Akses accessibility belum diaktifkan");
-      log("isAccessibilityPermissionEnabled after request => $granted");
-    } on PlatformException catch (e) {
-      log("requestPermission PlatformException: $e");
-      // fallback: try to open settings
-      try {
-        await _accMethod.invokeMethod('openAccessibilitySettings');
-        _showSnack("Buka Settings - silakan aktifkan layanan accessibility secara manual.");
-      } catch (_) {
-        _showSnack("Gagal membuka Settings accessibility.");
+    // Request Accessibility permission (akan membuka settings)
+    final granted = await FlutterAccessibilityService.requestAccessibilityPermission();
+    _showSnack(granted ? "Tombol request membuka Settings — aktifkan service di sana" : "Gagal membuka Settings untuk accessibility");
+    log("FlutterAccessibilityService.requestAccessibilityPermission() => $granted");
+
+    // Jika request berhasil memunculkan Settings, polling untuk cek status until enabled
+    _permissionPollAttempts = 0;
+    _permissionPollingTimer?.cancel();
+    _permissionPollingTimer = Timer.periodic(const Duration(milliseconds: 500), (t) async {
+      _permissionPollAttempts++;
+      final enabled = await FlutterAccessibilityService.isAccessibilityPermissionEnabled();
+      log('[ACC POLL] attempt=$_permissionPollAttempts enabled=$enabled');
+      if (enabled) {
+        t.cancel();
+        _permissionPollingTimer = null;
+        _showSnack("Aksesibilitas diaktifkan. Silakan Start Stream jika diinginkan.");
+        // optionally start stream automatically:
+        // startStream();
+      } else if (_permissionPollAttempts >= _permissionPollMaxAttempts) {
+        t.cancel();
+        _permissionPollingTimer = null;
+        _showSnack("Aksesibilitas belum aktif. Pastikan mengaktifkan layanan Xcreate di Settings > Accessibility.");
       }
-    }
+    });
   }
 
   Future<void> checkPermission() async {
-    try {
-      final status = await _accMethod.invokeMethod<bool>('isAccessibilityPermissionEnabled') ?? false;
-      _showSnack(status ? "Akses accessibility aktif" : "Akses accessibility TIDAK aktif");
-      log("isAccessibilityPermissionEnabled => $status");
-    } on PlatformException catch (e) {
-      log("checkPermission PlatformException: $e");
-      _showSnack("Tidak dapat memeriksa permission (native missing).");
-    }
+    final status = await FlutterAccessibilityService.isAccessibilityPermissionEnabled();
+    _showSnack(status ? "Akses accessibility aktif" : "Akses accessibility TIDAK aktif");
+    log("isAccessibilityPermissionEnabled => $status");
   }
 
   // -------------------- Stream control --------------------
   void startStream() async {
     try {
-      final granted = await (_accMethod.invokeMethod<bool>('isAccessibilityPermissionEnabled')
-              .catchError((_) => Future.value(false))) ??
-          false;
+      final granted = await FlutterAccessibilityService.isAccessibilityPermissionEnabled();
       if (!granted) {
         _showSnack("Akses accessibility belum diberikan. Tekan Request Permission dulu.");
         return;
@@ -231,37 +230,22 @@ class _XcappPageState extends State<XcappPage>
       _subscription?.cancel();
       _gotFirstEvent = false;
 
-      // safety timer: jika dalam 6 detik tidak ada event, informasikan user
+      // safety timer: jika dalam 8 detik tidak ada event, informasikan user
       _streamWatchTimer?.cancel();
-      _streamWatchTimer = Timer(const Duration(seconds: 6), () {
+      _streamWatchTimer = Timer(const Duration(seconds: 8), () {
         if (!_gotFirstEvent) {
           _showSnack("Tidak menerima event dari accessibility. Periksa: layanan aktif di Settings atau restart device.");
           log("[ACC] Stream aktif tapi belum ada event (watch timeout).");
         }
       });
 
-      // Subscribe to native EventChannel (native must send Map or JSON-string)
-      _subscription = _accEvents.receiveBroadcastStream().listen((rawEvent) async {
+      // subscribe
+      _subscription = FlutterAccessibilityService.accessStream.listen((event) async {
         try {
-          if (rawEvent == null) return;
-          _gotFirstEvent = true;
+          if (event == null) return;
+          _gotFirstEvent = true; // tanda bahwa stream sukses menerima event
 
-          // rawEvent should be Map or JSON string; normalize to Map<String, dynamic>
-          Map<String, dynamic> event;
-          if (rawEvent is String) {
-            try {
-              event = json.decode(rawEvent) as Map<String, dynamic>;
-            } catch (_) {
-              event = {'text': rawEvent.toString()};
-            }
-          } else if (rawEvent is Map) {
-            event = Map<String, dynamic>.from(rawEvent);
-          } else {
-            event = {'raw': rawEvent.toString()};
-          }
-
-          final pkg = (event['packageName'] ?? event['package'] ?? '')?.toString() ?? '';
-
+          final pkg = (event.packageName ?? '').toString();
           // filter toggles
           if (appToggles.isNotEmpty && appToggles.containsKey(pkg) && appToggles[pkg] == false) {
             log("Ignored app (toggle off): $pkg");
@@ -271,50 +255,32 @@ class _XcappPageState extends State<XcappPage>
           // Masukkan ke runtime list (UI)
           setState(() {
             events.insert(0, event);
+            // keep a reasonable cap to avoid unbounded growth in-memory
+            if (events.length > 300) events.removeRange(300, events.length);
           });
 
-          // Try to extract best text candidates
-          String combinedText = '';
-          if (event.containsKey('capturedText') && (event['capturedText']?.toString().trim().isNotEmpty ?? false)) {
-            combinedText = event['capturedText'].toString().trim();
-          } else if (event.containsKey('text')) {
-            final t = event['text'];
-            if (t is List) {
-              combinedText = t.map((e) => e?.toString() ?? '').join(' ').trim();
-            } else {
-              combinedText = t?.toString() ?? '';
-            }
-          } else if (event.containsKey('nodes')) {
-            final nodes = event['nodes'];
-            if (nodes is List) {
-              combinedText = nodes.map((e) => e?.toString() ?? '').join(' ').trim();
-            } else {
-              combinedText = nodes?.toString() ?? '';
-            }
-          } else if (event.containsKey('contentDescription')) {
-            combinedText = event['contentDescription']?.toString() ?? '';
-          } else {
-            combinedText = event['eventType']?.toString() ?? '';
-          }
+          // Ambil teks terbaik: event.text / capturedText / nodesText / contentDescription
+          final combinedText = _extractTextFromEvent(event);
 
           // Simpan notif log (mapping sederhana)
           final notifEntry = {
             "id": DateTime.now().millisecondsSinceEpoch.toString(),
             "app": pkg,
-            "title": event['title']?.toString() ?? event['eventType']?.toString() ?? '',
+            "title": _friendlyEventType(event),
             "text": combinedText,
             "timestamp": DateTime.now().toIso8601String(),
-            "raw": event,
+            "raw": _safeEventToMap(event),
           };
           notifLogs.insert(0, notifEntry);
+          if (notifLogs.length > 500) notifLogs.removeRange(500, notifLogs.length);
           await _saveNotifLogs();
 
           // post to remote if configured
           if (postUrl.isNotEmpty) {
             await _postNotification(event, combinedText);
           }
-        } catch (e) {
-          log("Error handling incoming native event: $e");
+        } catch (e, st) {
+          log("Error handling incoming accessibility event: $e\n$st");
         }
       }, onError: (e) {
         log("Stream error: $e");
@@ -323,7 +289,7 @@ class _XcappPageState extends State<XcappPage>
       _saveStreamFlag(true);
       setState(() => streamRunning = true);
       _showSnack("Stream accessibility dimulai");
-      log("▶️ Accessibility stream started (native EventChannel)");
+      log("▶️ Accessibility stream started");
     } catch (e, st) {
       log("startStream error: $e\n$st");
       _showSnack("Gagal memulai stream: $e");
@@ -340,10 +306,10 @@ class _XcappPageState extends State<XcappPage>
   }
 
   // -------------------- Post notification --------------------
-  Future<void> _postNotification(Map<String, dynamic> event, String combinedText) async {
+  Future<void> _postNotification(AccessibilityEvent event, String combinedText) async {
     try {
-      final pkg = event['packageName'] ?? event['package'] ?? '';
-      final title = event['title'] ?? event['eventType'] ?? '';
+      final pkg = (event.packageName ?? '').toString();
+      final title = _friendlyEventType(event);
       final text = combinedText;
       final body = json.encode({
         "app": pkg,
@@ -379,6 +345,7 @@ class _XcappPageState extends State<XcappPage>
         "timestamp": DateTime.now().toIso8601String(),
       };
       postLogs.insert(0, postEntry);
+      if (postLogs.length > 500) postLogs.removeRange(500, postLogs.length);
       await _savePostLogs();
 
       if (resp.statusCode >= 200 && resp.statusCode < 300) {
@@ -386,8 +353,8 @@ class _XcappPageState extends State<XcappPage>
       } else {
         log("POST failed ${resp.statusCode} ${resp.body}");
       }
-    } catch (e) {
-      log("POST error: $e");
+    } catch (e, st) {
+      log("POST error: $e\n$st");
       final postEntry = {
         "id": DateTime.now().millisecondsSinceEpoch.toString(),
         "url": postUrl,
@@ -460,6 +427,95 @@ class _XcappPageState extends State<XcappPage>
     }
   }
 
+  // -------------------- Utilities: ekstraksi teks accessibility --------------------
+  String _extractTextFromEvent(AccessibilityEvent event) {
+    try {
+      // banyak plugin meng-expose properties yang berbeda; gunakan dynamic access dan beberapa fallback
+      final dyn = event as dynamic;
+
+      // 1) event.text (sering List<CharSequence> atau String)
+      try {
+        final dynText = dyn.text;
+        if (dynText != null) {
+          if (dynText is String) return dynText.trim();
+          if (dynText is List) return dynText.map((e) => e?.toString() ?? '').join(' ').trim();
+          return dynText.toString().trim();
+        }
+      } catch (_) {}
+
+      // 2) capturedText (plugin kadang menyediakan)
+      try {
+        final cap = dyn.capturedText;
+        if (cap != null && cap.toString().trim().isNotEmpty) return cap.toString().trim();
+      } catch (_) {}
+
+      // 3) nodesText (list)
+      try {
+        final nodes = dyn.nodesText;
+        if (nodes != null) {
+          if (nodes is List) return nodes.map((e) => e?.toString() ?? '').join(' ').trim();
+          return nodes.toString().trim();
+        }
+      } catch (_) {}
+
+      // 4) textContent / contentDescription
+      try {
+        final cd = dyn.contentDescription ?? dyn.textContent ?? dyn.tickerText;
+        if (cd != null && cd.toString().trim().isNotEmpty) return cd.toString().trim();
+      } catch (_) {}
+
+      // 5) notification extras (jika plugin expose raw notification)
+      try {
+        final extras = dyn.extras; // biasanya Map
+        if (extras != null && extras is Map) {
+          final candidates = <String>[];
+          if (extras.containsKey('android.title')) candidates.add(extras['android.title']?.toString() ?? '');
+          if (extras.containsKey('android.text')) candidates.add(extras['android.text']?.toString() ?? '');
+          final joined = candidates.where((s) => s.isNotEmpty).join(' ');
+          if (joined.isNotEmpty) return joined.trim();
+        }
+      } catch (_) {}
+
+      // 6) fallback: event.eventType / className
+      final fallback = (_friendlyEventType(event) + ' ' + ((event.className ?? '')?.toString() ?? '')).trim();
+      return fallback.isNotEmpty ? fallback : 'unknown_event';
+    } catch (e) {
+      log('extractTextFromEvent error: $e');
+      return event.eventType?.toString() ?? '';
+    }
+  }
+
+  String _friendlyEventType(AccessibilityEvent e) {
+    try {
+      final dyn = e as dynamic;
+      final t = dyn.eventType ?? e.eventType ?? ''; // some versions expose eventType as int or string
+      return t.toString();
+    } catch (_) {
+      return e.eventType?.toString() ?? '';
+    }
+  }
+
+  Map<String, dynamic> _safeEventToMap(AccessibilityEvent e) {
+    try {
+      final dyn = e as dynamic;
+      return {
+        'package': dyn.packageName ?? dyn.package ?? e.packageName ?? '',
+        'eventType': dyn.eventType ?? e.eventType ?? '',
+        'className': dyn.className ?? dyn.sourceClassName ?? '',
+        'text': (() {
+          try {
+            final t = dyn.text ?? dyn.capturedText ?? dyn.contentDescription;
+            return (t != null) ? t.toString() : '';
+          } catch (_) {
+            return '';
+          }
+        })(),
+      };
+    } catch (e) {
+      return {'raw': e.toString()};
+    }
+  }
+
   // -------------------- UI helpers --------------------
   void _showSnack(String text) {
     if (!mounted) return;
@@ -507,13 +563,12 @@ class _XcappPageState extends State<XcappPage>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: const [
-              Text("• Native AccessibilityService/NotificationListener harus mengirim event ke Flutter via EventChannel."),
-              SizedBox(height: 6),
-              Text("• Tekan Request Permission untuk membuka Settings Aksesibilitas (native handler akan membuka Settings)."),
-              SizedBox(height: 6),
-              Text("• Stream hanya menerima event jika native service benar-benar aktif."),
-              SizedBox(height: 6),
-              Text("• POST yang dikirim mengikuti JSON: { app, title, text, timestamp }"),
+              Text("• Plugin menggunakan AccessibilityService untuk membaca event dari aplikasi lain."), SizedBox(height: 6),
+              Text("• Aksesibilitas harus diaktifkan oleh user di Settings (Request Permission akan membuka halaman setting)."), SizedBox(height: 6),
+              Text("• Accessibility stream tidak selalu menyamai detail NotificationListener (contoh: icon, remoteReply langsung)."), SizedBox(height: 6),
+              Text("• POST yang dikirim mengikuti JSON: { app, title, text, timestamp }"), SizedBox(height: 6),
+              Text("• Auto-reply / auto-send tidak termasuk di sini (hanya pencatatan & POST)."), SizedBox(height: 6),
+              Text("• Lihat README / AndroidManifest & res/xml/accessibility_service_config.xml untuk setup Android."),
             ],
           ),
         ),
@@ -597,32 +652,11 @@ class _XcappPageState extends State<XcappPage>
     );
   }
 
-  Widget _buildNotificationTile(dynamic? notif) {
+  Widget _buildNotificationTile(AccessibilityEvent? notif) {
     if (notif == null) return const SizedBox();
-    String pkg = '';
-    String title = '';
-    String content = '';
-
-    if (notif is Map) {
-      pkg = (notif['packageName'] ?? notif['package'] ?? '').toString();
-      title = (notif['title'] ?? notif['eventType'] ?? '').toString();
-      if ((notif['capturedText'] ?? '').toString().trim().isNotEmpty) {
-        content = notif['capturedText'].toString();
-      } else if (notif['text'] != null) {
-        final t = notif['text'];
-        if (t is List) {
-          content = t.map((e) => e?.toString() ?? '').join(' ');
-        } else {
-          content = t?.toString() ?? '';
-        }
-      } else {
-        content = notif['raw']?.toString() ?? '';
-      }
-    } else {
-      content = notif.toString();
-      title = '(event)';
-    }
-
+    final pkg = (notif.packageName ?? 'unknown').toString();
+    final title = _friendlyEventType(notif);
+    final content = _extractTextFromEvent(notif);
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -637,8 +671,7 @@ class _XcappPageState extends State<XcappPage>
           const SizedBox(height: 6),
           Row(children: [
             Expanded(child: Text(pkg, style: const TextStyle(fontSize: 12, color: Colors.grey))),
-            // cannot rely on isFocused here since this is generic map
-            const SizedBox.shrink(),
+            Text((notif.isFocused == true) ? "Focused" : "", style: const TextStyle(color: Colors.green, fontSize: 12)),
           ]),
         ]),
         isThreeLine: true,
@@ -648,7 +681,7 @@ class _XcappPageState extends State<XcappPage>
 
   Widget _buildNotificationsTab() {
     return events.isEmpty
-        ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: const [Icon(Icons.notifications_none, size: 56, color: Colors.grey), SizedBox(height: 8), Text("Belum ada event accessibility masuk")] ))
+        ? const Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.notifications_none, size: 56, color: Colors.grey), SizedBox(height: 8), Text("Belum ada event accessibility masuk")]))
         : RefreshIndicator(
             onRefresh: () async {
               setState(() {});
@@ -893,7 +926,14 @@ class _XcappPageState extends State<XcappPage>
   void dispose() {
     _subscription?.cancel();
     _streamWatchTimer?.cancel();
+    _permissionPollingTimer?.cancel();
     _tabController.dispose();
     super.dispose();
   }
+}
+
+// NOTE: flutter_accessibility_service mungkin memberikan objek AccessibilityEvent berbeda di beberapa platform / versi.
+// Extension ringan hanya untuk kompatibilitas - jangan hapus plugin's AccessibilityEvent class.
+extension on AccessibilityEvent {
+  get className => null;
 }
