@@ -13,17 +13,19 @@
 
     <!-- ========== QUERIES (package visibility) ========== -->
     <queries>
+        <!-- Launcher intent -->
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
 
+        <!-- Text sharing -->
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT" />
             <data android:mimeType="text/plain" />
         </intent>
 
-        <!-- contoh apps (opsional) -->
+        <!-- Target apps (opsional, bisa dihapus bila tidak perlu) -->
         <package android:name="com.whatsapp" />
         <package android:name="com.whatsapp.w4b" />
         <package android:name="org.telegram.messenger" />
@@ -52,6 +54,7 @@
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme" />
 
+            <!-- Launcher -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -66,13 +69,13 @@
             </intent-filter>
         </activity>
 
-        <!-- ===== Foreground service (plugin) ===== -->
+        <!-- ===== Foreground service (flutter_foreground_task) ===== -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
             android:foregroundServiceType="dataSync|connectedDevice|mediaProjection"
             android:exported="false" />
 
-        <!-- ===== Accessibility service (Flutter plugin) ===== -->
+        <!-- ===== Accessibility service (flutter_accessibility_service) ===== -->
         <service
             android:name="slayer.accessibility.service.flutter_accessibility_service.FlutterAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
