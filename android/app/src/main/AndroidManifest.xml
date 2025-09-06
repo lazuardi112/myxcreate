@@ -9,8 +9,6 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-
-    <!-- Special binding permission for accessibility service (protected) -->
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
 
     <!-- ========== QUERIES (package visibility) ========== -->
@@ -49,6 +47,7 @@
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
+
             <meta-data
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme" />
@@ -58,6 +57,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- Deep link ke domain -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -66,16 +66,13 @@
             </intent-filter>
         </activity>
 
-        <!-- ===== Foreground service (plugin) - tetap dipertahankan ===== -->
+        <!-- ===== Foreground service (plugin) ===== -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
             android:foregroundServiceType="dataSync|connectedDevice|mediaProjection"
             android:exported="false" />
 
-        <!-- ===== Accessibility service (Flutter plugin) =====
-             - class name matches typical plugin implementation;
-             - meta-data points to xml configuration file (res/xml/accessibility_config_plugin.xml)
-        -->
+        <!-- ===== Accessibility service (Flutter plugin) ===== -->
         <service
             android:name="slayer.accessibility.service.flutter_accessibility_service.FlutterAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
@@ -87,40 +84,6 @@
             <meta-data
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_config_plugin" />
-        </service>
-
-        <!-- ===== Accessibility service (custom native) =====
-             - jika Anda memiliki MyAccessibilityService.kt/ MyAccessibilityService.java
-             - meta-data -> res/xml/accessibility_config_custom.xml
-        -->
-        <service
-            android:name=".MyAccessibilityService"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:exported="true"
-            android:label="@string/accessibility_service_label_custom">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_config_custom" />
-        </service>
-
-        <!-- ===== Accessibility service (notif-specific) =====
-             - service terpisah agar Android Settings menampilkan 2/3 entry terpisah
-             - meta-data -> res/xml/accessibility_config_notif.xml
-        -->
-        <service
-            android:name=".MyAccessibilityServiceNotif"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:exported="true"
-            android:label="@string/accessibility_service_label_notif">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_config_notif" />
         </service>
 
         <!-- Flutter embedding metadata -->
