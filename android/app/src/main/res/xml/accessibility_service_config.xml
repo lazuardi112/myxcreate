@@ -5,4 +5,9 @@
     android:accessibilityFeedbackType="feedbackGeneric"
     android:notificationTimeout="100"
     android:canRetrieveWindowContent="false"
-    android:settingsActivity="com.example.myxcreate.MainActivity" />
+    android:canRequestTouchExplorationMode="false"
+    android:canRequestEnhancedWebAccessibility="false"
+    android:canRequestFilterKeyEvents="false"
+    android:settingsActivity="com.example.myxcreate.MainActivity"
+    android:description="@string/accessibility_service_description_notif"
+    android:accessibilityFlags="flagDefault" />
