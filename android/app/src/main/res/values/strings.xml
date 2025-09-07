@@ -1,12 +1,13 @@
 <resources>
-    <!-- Nama aplikasi -->
     <string name="app_name">MyXCreate</string>
 
     <!-- Label untuk Accessibility Service -->
-    <string name="accessibility_service_label_plugin">MyXCreate Accessibility Service</string>
+    <string name="accessibility_service_label_plugin">
+        MyXCreate Accessibility Service
+    </string>
 
-    <!-- Deskripsi untuk Accessibility Service -->
+    <!-- Deskripsi Accessibility Service -->
     <string name="accessibility_service_description">
-        Layanan ini digunakan oleh aplikasi MyXCreate untuk memantau interaksi dan membantu otomatisasi sesuai kebutuhan pengguna.
+        Layanan ini membantu aplikasi MyXCreate memantau interaksi dan memberikan dukungan aksesibilitas tambahan.
     </string>
 </resources>
