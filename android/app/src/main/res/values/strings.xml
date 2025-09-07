@@ -1,29 +1,49 @@
 <resources>
-    <!-- Nama aplikasi -->
+    <!-- ================== Nama & Branding ================== -->
     <string name="app_name">MyXCreate</string>
 
-    <!-- Label Accessibility Service -->
+    <!-- ================== Accessibility Services ================== -->
+    <!-- Label utama Accessibility Service -->
     <string name="accessibility_service_label_plugin">
         MyXCreate Accessibility Service
     </string>
 
     <!-- Deskripsi utama Accessibility Service -->
     <string name="accessibility_service_description">
-        Layanan ini membantu aplikasi MyXCreate memantau interaksi dan memberikan dukungan aksesibilitas tambahan.
+        Layanan ini membantu aplikasi MyXCreate memantau interaksi pengguna dan memberikan dukungan aksesibilitas tambahan.
     </string>
 
-    <!-- Deskripsi untuk custom Accessibility Service -->
+    <!-- Deskripsi custom Accessibility Service (otomatisasi & fitur khusus) -->
     <string name="accessibility_service_description_custom">
-        Layanan khusus ini digunakan untuk otomatisasi tertentu dalam aplikasi MyXCreate.
+        Layanan khusus ini digunakan untuk otomatisasi dan pengelolaan tertentu dalam aplikasi MyXCreate.
     </string>
 
-    <!-- Deskripsi untuk notification Accessibility Service -->
+    <!-- Deskripsi untuk Notification Accessibility Service -->
     <string name="accessibility_service_description_notif">
-        Layanan ini digunakan untuk membaca dan mengelola notifikasi agar MyXCreate dapat bekerja dengan benar.
+        Layanan ini digunakan untuk membaca dan mengelola notifikasi agar MyXCreate dapat bekerja dengan benar di latar belakang.
     </string>
 
-    <!-- Deskripsi untuk notifikasi accessibility -->
+    <!-- Deskripsi izin akses notifikasi untuk Accessibility -->
     <string name="notification_accessibility_desc">
-        Layanan ini memberikan izin MyXCreate untuk mengakses dan merespons notifikasi.
+        Layanan ini memberikan izin MyXCreate untuk mengakses, membaca, dan merespons notifikasi yang masuk.
+    </string>
+
+    <!-- ================== Notifikasi Foreground Service ================== -->
+    <string name="foreground_service_title">
+        MyXCreate - Layanan Aktif
+    </string>
+    <string name="foreground_service_content">
+        Layanan berjalan di latar belakang untuk menerima notifikasi dan menjaga aplikasi tetap aktif.
+    </string>
+
+    <!-- ================== Pesan & Label Tambahan ================== -->
+    <string name="no_notifications_message">
+        Belum ada notifikasi.
+    </string>
+    <string name="clear_notifications_confirmation">
+        Yakin ingin menghapus semua notifikasi?
+    </string>
+    <string name="notification_permission_granted">
+        Akses notifikasi sudah diberikan.
     </string>
 </resources>
