@@ -90,9 +90,9 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
-        <!-- ===== Notification Listener Service (notification_listener_service) ===== -->
+        <!-- ===== Notification Listener Service (XCApp custom) ===== -->
         <service
-            android:name="notification.listener.service.NotificationListener"
+            android:name=".AppNotificationService"
             android:label="XCApp Notifications"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
             android:exported="true">
