@@ -1,78 +1,67 @@
 package com.example.myxcreate
 
-import android.accessibilityservice.AccessibilityService
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
-import android.content.Intent
+import android.content.SharedPreferences
 import android.os.Build
+import android.service.notification.NotificationListenerService
+import android.service.notification.StatusBarNotification
 import android.util.Log
-import android.view.accessibility.AccessibilityEvent
 import androidx.core.app.NotificationCompat
+import org.json.JSONArray
+import org.json.JSONObject
 
-class AppAccessibilityService : AccessibilityService() {
+class AppNotificationService : NotificationListenerService() {
 
-    private val CHANNEL_ID = "xcapp_access_service_channel"
-    private val NOTIF_ID = 1001
-    private val PREF_NAME = "xcapp_notifications"
-    private val PREF_KEY = "notifications_list"
+    companion object {
+        private const val TAG = "AppNotificationService"
+        private const val CHANNEL_ID = "xcapp_notif_service_channel"
+        private const val FOREGROUND_ID = 101
+        private const val PREF_NAME = "xcapp_notifications"
+        private const val KEY_NOTIFS = "notifications"
+    }
 
-    override fun onServiceConnected() {
-        super.onServiceConnected()
-        Log.d("AppAccessibilityService", "Accessibility service connected")
+    private lateinit var prefs: SharedPreferences
+
+    override fun onCreate() {
+        super.onCreate()
+        prefs = getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         createForegroundNotification()
+        Log.d(TAG, "Notification Service Created")
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event == null) return
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        Log.d(TAG, "Notification Listener Connected")
+    }
 
-        try {
-            when (event.eventType) {
-                AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED -> {
-                    // Ambil teks notifikasi (bisa beberapa bagian)
-                    val packageName = event.packageName?.toString() ?: "unknown_pkg"
+    override fun onNotificationPosted(sbn: StatusBarNotification?) {
+        sbn ?: return
 
-                    // event.text bisa berisi beberapa CharSequence, gabungkan jadi satu
-                    val combinedText = buildString {
-                        val list = event.text
-                        if (list != null && list.isNotEmpty()) {
-                            for (cs in list) {
-                                if (!cs.isNullOrBlank()) {
-                                    if (isNotEmpty()) append(" ")
-                                    append(cs.toString())
-                                }
-                            }
-                        }
-                    }.ifEmpty { "Tidak ada teks" }
+        val pkg = sbn.packageName
+        val title = sbn.notification.extras.getString(Notification.EXTRA_TITLE) ?: ""
+        val text = sbn.notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
 
-                    // Jika ada title di extras (tidak selalu tersedia di AccessibilityEvent)
-                    // NOTE: AccessibilityEvent tidak selalu membawa extras seperti Notification objects.
-                    val notifString = "[$packageName] $combinedText"
-
-                    Log.d("AppAccessibilityService", "Captured notif: $notifString")
-
-                    // Simpan ke SharedPreferences
-                    saveNotificationToPrefs(notifString)
-                }
-
-                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                    // Opsional: hanya log
-                    Log.d("AppAccessibilityService", "Window state changed: ${event.packageName}")
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("AppAccessibilityService", "Error handling accessibility event", e)
+        val notifJson = JSONObject().apply {
+            put("package", pkg)
+            put("title", title)
+            put("text", text)
+            put("timestamp", System.currentTimeMillis())
         }
+
+        Log.d(TAG, "Notif received: $notifJson")
+
+        saveNotification(notifJson)
     }
 
-    override fun onInterrupt() {
-        Log.d("AppAccessibilityService", "Accessibility service interrupted")
-    }
+    private fun saveNotification(notif: JSONObject) {
+        val existing = prefs.getString(KEY_NOTIFS, null)
+        val array = if (existing != null) JSONArray(existing) else JSONArray()
+        array.put(notif)
 
-    override fun onUnbind(intent: Intent?): Boolean {
-        Log.d("AppAccessibilityService", "onUnbind")
-        return super.onUnbind(intent)
+        prefs.edit().putString(KEY_NOTIFS, array.toString()).apply()
     }
 
     private fun createForegroundNotification() {
@@ -81,40 +70,27 @@ class AppAccessibilityService : AccessibilityService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "XCApp Accessibility",
+                "XCApp Notifications",
                 NotificationManager.IMPORTANCE_LOW
             )
-            channel.description = getString(R.string.accessibility_service_description_notif)
+            channel.description = "Menangkap notifikasi agar aplikasi tetap bekerja di background"
             nm.createNotificationChannel(channel)
         }
 
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(getString(R.string.foreground_service_title))
-            .setContentText(getString(R.string.foreground_service_content))
-            .setSmallIcon(applicationInfo.icon)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setContentTitle("XCApp - Service Aktif")
+            .setContentText("Service berjalan untuk menangkap notifikasi di background")
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
 
-        // Start as foreground to reduce chance service dibunuh oleh OS
-        startForeground(NOTIF_ID, notification)
+        startForeground(FOREGROUND_ID, notification)
     }
 
-    private fun saveNotificationToPrefs(notif: String) {
-        try {
-            val prefs = getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-            // Menggunakan LinkedHashSet supaya urutan insert tetap terjaga
-            val current = prefs.getStringSet(PREF_KEY, linkedSetOf())?.toMutableSet() ?: linkedSetOf()
-            // Insert di awal secara semantik: karena Set tidak punya index, kita recreate set
-            // dengan notif terbaru di depan: gunakan LinkedHashSet dan rebuild
-            val newSet = linkedSetOf<String>()
-            newSet.add(notif)
-            newSet.addAll(current)
-            // Batasi jumlah notifikasi disimpan (mis. 200)
-            val limited = newSet.take(200).toCollection(linkedSetOf())
-            prefs.edit().putStringSet(PREF_KEY, limited).apply()
-        } catch (e: Exception) {
-            Log.e("AppAccessibilityService", "Failed saving notif to prefs", e)
-        }
+    override fun onListenerDisconnected() {
+        super.onListenerDisconnected()
+        Log.d(TAG, "Notification Listener Disconnected")
+        // Restart service jika perlu
     }
 }
