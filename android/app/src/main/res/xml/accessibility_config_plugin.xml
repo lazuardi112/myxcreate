@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/accessibility_service_description"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewClicked|typeViewScrolled"
-    android:accessibilityFeedbackType="feedbackSpoken"
+    android:packageNames=""
+    android:accessibilityFeedbackType="feedbackGeneric"
     android:notificationTimeout="100"
     android:canRetrieveWindowContent="true"
     android:canRequestEnhancedWebAccessibility="true"
+    android:canRequestFilterKeyEvents="true"
     android:canRequestTouchExplorationMode="true"
     android:settingsActivity=""
-    android:accessibilityFlags="flagDefault" />
+    android:accessibilityFlags="flagDefault|flagReportViewIds|flagRetrieveInteractiveWindows" />
