@@ -1,65 +1,76 @@
 package com.example.myxcreate
 
-import android.accessibilityservice.AccessibilityService
-import android.app.Notification
+import android.content.Context
+import android.service.notification.NotificationListenerService
+import android.service.notification.StatusBarNotification
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.content.Intent
+import android.app.Notification
 import android.os.Build
 import android.util.Log
-import android.view.accessibility.AccessibilityEvent
 import androidx.core.app.NotificationCompat
 
-class AppAccessibilityService : AccessibilityService() {
+class AppNotificationService : NotificationListenerService() {
 
-    private val CHANNEL_ID = "xcapp_access_service_channel"
+    private val CHANNEL_ID = "xcapp_notification_service_channel"
     private val NOTIF_ID = 1001
+    private val PREF_NAME = "xcapp_notifications"
+    private val PREF_KEY = "notifications"
 
-    override fun onServiceConnected() {
-        super.onServiceConnected()
-        Log.d("AppAccessibilityService", "Accessibility service connected")
+    override fun onCreate() {
+        super.onCreate()
+        Log.d("AppNotificationService", "Notification service created")
         createForegroundNotification()
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Anda bisa tangani event jika perlu. Untuk tujuan "keep alive" tidak wajib isi.
-        if (event != null) {
-            // contoh: log tipe event
-            Log.d("AppAccessibilityService", "Event: ${event.eventType} from ${event.packageName}")
+    override fun onNotificationPosted(sbn: StatusBarNotification) {
+        try {
+            val packageName = sbn.packageName ?: ""
+            val title = sbn.notification.extras.getString("android.title") ?: ""
+            val content = sbn.notification.extras.getCharSequence("android.text")?.toString() ?: ""
+
+            val notifString = "[$packageName] $title - $content"
+            Log.d("AppNotificationService", "New notification: $notifString")
+
+            saveNotification(notifString)
+        } catch (e: Exception) {
+            Log.e("AppNotificationService", "Error saving notification", e)
         }
     }
 
-    override fun onInterrupt() {
-        Log.d("AppAccessibilityService", "Accessibility service interrupted")
-    }
-
-    override fun onUnbind(intent: Intent?): Boolean {
-        Log.d("AppAccessibilityService", "onUnbind")
-        return super.onUnbind(intent)
+    override fun onNotificationRemoved(sbn: StatusBarNotification) {
+        // Optional: tangani jika notifikasi dihapus
+        Log.d("AppNotificationService", "Notification removed: ${sbn.packageName}")
     }
 
     private fun createForegroundNotification() {
-        val nm = getSystemService(NotificationManager::class.java)
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "XCApp Accessibility",
+                "XCApp Notifikasi Service",
                 NotificationManager.IMPORTANCE_LOW
             )
-            channel.description = "Accessibility service to keep XCApp running"
+            channel.description = "Service untuk menerima notifikasi di background"
             nm.createNotificationChannel(channel)
         }
 
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("XCApp - Layanan Aksesibilitas Aktif")
-            .setContentText("Service berjalan untuk menjaga notifikasi di latar belakang")
-            .setSmallIcon(getApplicationInfo().icon)
+            .setContentTitle("XCApp - Layanan Notifikasi Aktif")
+            .setContentText("Menerima notifikasi di latar belakang")
+            .setSmallIcon(applicationInfo.icon)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
             .build()
 
-        // Jalankan service sebagai foreground agar proses lebih sulit dimatikan
         startForeground(NOTIF_ID, notification)
+    }
+
+    private fun saveNotification(notif: String) {
+        val prefs = getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        val current = prefs.getStringSet(PREF_KEY, mutableSetOf())?.toMutableSet() ?: mutableSetOf()
+        current.add(notif)
+        prefs.edit().putStringSet(PREF_KEY, current).apply()
     }
 }
