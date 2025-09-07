@@ -1,17 +1,16 @@
-import 'dart:async';
-
+import 'dart:async'; 
 import 'package:flutter/material.dart';
 import 'package:flutter_accessibility_service/flutter_accessibility_service.dart';
 import 'package:flutter_accessibility_service/accessibility_event.dart';
 
-class MyPage extends StatefulWidget {
-  const MyPage({super.key});
+class XcappPage extends StatefulWidget {
+  const XcappPage({super.key});
 
   @override
-  State<MyPage> createState() => _MyPageState();
+  State<XcappPage> createState() => _XcappPageState();
 }
 
-class _MyPageState extends State<MyPage> {
+class _XcappPageState extends State<XcappPage> {
   StreamSubscription<AccessibilityEvent?>? _sub;
 
   @override
@@ -21,7 +20,8 @@ class _MyPageState extends State<MyPage> {
   }
 
   void _listenEvents() async {
-    bool enabled = await FlutterAccessibilityService.isAccessibilityPermissionEnabled();
+    bool enabled =
+        await FlutterAccessibilityService.isAccessibilityPermissionEnabled();
     if (!enabled) {
       await FlutterAccessibilityService.requestAccessibilityPermission();
     }
