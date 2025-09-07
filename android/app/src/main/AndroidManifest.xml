@@ -3,7 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     package="com.example.myxcreate">
 
-    <!-- ========== PERMISSIONS ========== -->
+    <!-- ================== PERMISSIONS ================== -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -12,7 +12,7 @@
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
     <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE" />
 
-    <!-- ========== QUERIES (package visibility) ========== -->
+    <!-- ================== QUERIES ================== -->
     <queries>
         <!-- Launcher intent -->
         <intent>
@@ -32,7 +32,7 @@
         <package android:name="org.telegram.messenger" />
     </queries>
 
-    <!-- ========== APPLICATION ========== -->
+    <!-- ================== APPLICATION ================== -->
     <application
         android:name="${applicationName}"
         android:label="@string/app_name"
@@ -93,7 +93,7 @@
         <!-- ===== Notification Listener Service (notification_listener_service) ===== -->
         <service
             android:name="notification.listener.service.NotificationListener"
-            android:label="notifications"
+            android:label="XCApp Notifications"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
             android:exported="true">
             <intent-filter>
