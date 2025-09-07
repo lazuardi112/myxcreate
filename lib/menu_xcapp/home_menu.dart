@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:notification_listener_service/notification_event.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:android_intent_plus/android_intent.dart';
 
 class XcappPage extends StatefulWidget {
   const XcappPage({super.key});
@@ -76,6 +77,19 @@ class _XcappPageState extends State<XcappPage> {
     );
   }
 
+  /// Buka halaman pengaturan Accessibility
+  Future<void> _openAccessibilitySettings() async {
+    final intent = AndroidIntent(
+      action: 'android.settings.ACCESSIBILITY_SETTINGS',
+    );
+    await intent.launch();
+  }
+
+  /// Buka halaman pengaturan Notification Access
+  Future<void> _openNotificationAccessSettings() async {
+    await NotificationListenerService.requestPermission();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -93,6 +107,23 @@ class _XcappPageState extends State<XcappPage> {
               await prefs.remove("notifications");
             },
           ),
+          PopupMenuButton<String>(
+            onSelected: (value) async {
+              if (value == "accessibility") {
+                await _openAccessibilitySettings();
+              } else if (value == "notification") {
+                await _openNotificationAccessSettings();
+              }
+            },
+            itemBuilder: (BuildContext context) => [
+              const PopupMenuItem(
+                  value: "accessibility",
+                  child: Text("Buka Pengaturan Accessibility")),
+              const PopupMenuItem(
+                  value: "notification",
+                  child: Text("Buka Pengaturan Notification Access")),
+            ],
+          )
         ],
       ),
       body: notifications.isEmpty
