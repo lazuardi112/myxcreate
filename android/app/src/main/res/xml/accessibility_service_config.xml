@@ -1,14 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<accessibility-service
-    xmlns:android="http://schemas.android.com/apk/res/android"
-    android:description="@string/app_name"
-    android:accessibilityEventTypes="typeNotificationStateChanged|typeWindowContentChanged"
-    android:packageNames=""   <!-- kosong = pantau semua app, isi dengan package tertentu kalau mau filter -->
-    android:accessibilityFeedbackType="feedbackGeneric"
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/accessibility_service_description"
+    android:label="@string/accessibility_service_label_plugin"
+    android:accessibilityEventTypes="typeAllMask"
+    android:accessibilityFeedbackType="feedbackSpoken"
     android:notificationTimeout="100"
     android:canRetrieveWindowContent="true"
+    android:canRequestEnhancedWebAccessibility="true"
+    android:canRequestTouchExplorationMode="true"
+    android:canRequestFilterKeyEvents="true"
     android:settingsActivity=""
-    android:canPerformGestures="false"
-    android:canRequestTouchExplorationMode="false"
-    android:canRequestFilterKeyEvents="false"
-    android:canRequestEnhancedWebAccessibility="false" />
+    android:accessibilityFlags="flagDefault" />
