@@ -1,7 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:notification_listener_service/notification_event.dart';
-import 'package:notification_listener_service/notification_listener_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:android_intent_plus/android_intent.dart';
 
@@ -13,64 +12,56 @@ class XcappPage extends StatefulWidget {
 }
 
 class _XcappPageState extends State<XcappPage> {
-  List<String> notifications = [];
-  StreamSubscription<ServiceNotificationEvent>? _subscription;
+  List<Map<String, dynamic>> notifications = [];
+  Timer? _refreshTimer;
 
   @override
   void initState() {
     super.initState();
     _loadNotifications();
-    _initNotificationListener();
+    // Refresh setiap 1 detik untuk membaca notifikasi baru
+    _refreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      _loadNotifications();
+    });
   }
 
   /// Load notifikasi dari SharedPreferences
   Future<void> _loadNotifications() async {
     final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getStringList("notifications") ?? [];
+    final notifJson = prefs.getString('notifications') ?? '[]';
+    final List<dynamic> notifList = jsonDecode(notifJson);
+
     setState(() {
-      notifications = saved;
+      notifications = notifList.map((e) => e as Map<String, dynamic>).toList().reversed.toList();
     });
   }
 
-  /// Simpan notifikasi ke SharedPreferences
-  Future<void> _saveNotifications() async {
+  /// Hapus semua notifikasi
+  Future<void> _clearNotifications() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList("notifications", notifications);
-  }
-
-  /// Mulai mendengarkan notifikasi
-  Future<void> _initNotificationListener() async {
-    // cek izin akses notifikasi
-    bool isGranted = await NotificationListenerService.isPermissionGranted();
-    if (!isGranted) {
-      await NotificationListenerService.requestPermission();
-    }
-
-    // dengarkan notifikasi baru
-    _subscription =
-        NotificationListenerService.notificationsStream.listen((event) {
-      String notif =
-          "[${event.packageName}] ${event.title ?? ''} - ${event.content ?? ''}";
-
-      setState(() {
-        notifications.insert(0, notif);
-      });
-
-      _saveNotifications();
+    await prefs.remove("notifications");
+    setState(() {
+      notifications.clear();
     });
   }
 
-  @override
-  void dispose() {
-    _subscription?.cancel();
-    super.dispose();
-  }
+  Widget _buildNotificationTile(Map<String, dynamic> notif) {
+    String title = notif['title'] ?? '';
+    String text = notif['text'] ?? '';
+    String pkg = notif['package'] ?? '';
+    int timestamp = notif['timestamp'] ?? 0;
+    DateTime dt = DateTime.fromMillisecondsSinceEpoch(timestamp);
 
-  Widget _buildNotificationTile(String notif) {
     return ListTile(
       leading: const Icon(Icons.notifications),
       title: Text(
-        notif,
+        "$title",
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontWeight: FontWeight.bold),
+      ),
+      subtitle: Text(
+        "[$pkg] $text\n${dt.toLocal()}",
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
       ),
@@ -87,7 +78,16 @@ class _XcappPageState extends State<XcappPage> {
 
   /// Buka halaman pengaturan Notification Access
   Future<void> _openNotificationAccessSettings() async {
-    await NotificationListenerService.requestPermission();
+    final intent = AndroidIntent(
+      action: 'android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS',
+    );
+    await intent.launch();
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
   }
 
   @override
@@ -99,13 +99,7 @@ class _XcappPageState extends State<XcappPage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.delete_forever),
-            onPressed: () async {
-              setState(() {
-                notifications.clear();
-              });
-              final prefs = await SharedPreferences.getInstance();
-              await prefs.remove("notifications");
-            },
+            onPressed: _clearNotifications,
           ),
           PopupMenuButton<String>(
             onSelected: (value) async {
@@ -134,20 +128,6 @@ class _XcappPageState extends State<XcappPage> {
                 return _buildNotificationTile(notifications[index]);
               },
             ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () async {
-          bool granted =
-              await NotificationListenerService.isPermissionGranted();
-          if (!granted) {
-            await NotificationListenerService.requestPermission();
-          } else {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text("Akses notifikasi sudah diberikan")),
-            );
-          }
-        },
-        child: const Icon(Icons.lock_open),
-      ),
     );
   }
 }
