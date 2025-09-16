@@ -1,10 +1,13 @@
-// home_page.dart
+// home.dart
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:pdf/pdf.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
-import 'package:http/http.dart' as http;
-import 'detail_menu_page.dart'; // pastikan file ini ada dan path benar
+import 'detail.dart';
+
+// Package untuk PDF/printing
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -13,590 +16,500 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage>
-    with SingleTickerProviderStateMixin {
-  String username = "User";
-  List<dynamic> circleMenus = [];
-  bool isLoadingMenus = true;
+class _HomePageState extends State<HomePage> {
+  List<Map<String, dynamic>> _books = [];
+  String _searchQuery = "";
+  Map<int, bool> _exporting = {}; // track export state per book
 
   @override
   void initState() {
     super.initState();
-    loadUsername();
-    loadCircleMenusFromPrefs(); // load dari SharedPreferences lebih dulu
-    fetchCircleMenus(); // lalu update dari API jika ada
+    _loadBooks();
   }
 
-  Future<void> loadUsername() async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    String? user = prefs.getString('username');
-    setState(() {
-      username = user ?? "User";
-    });
-  }
-
-  /// Load menu lingkaran dari SharedPreferences (local cache)
-  Future<void> loadCircleMenusFromPrefs() async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    String? savedMenus = prefs.getString('circleMenus');
-    if (savedMenus != null) {
-      try {
-        List<dynamic> data = json.decode(savedMenus);
-        setState(() {
-          circleMenus = data;
-          isLoadingMenus = false;
-        });
-      } catch (e) {
-        debugPrint("loadCircleMenusFromPrefs error: $e");
-      }
-    }
-  }
-
-  /// Fetch menu lingkaran dari API. Jika gagal, gunakan fallback local.
-  Future<void> fetchCircleMenus() async {
-    const String endpoint =
-        "https://api.xcreate.my.id/myxcreate/get_menu_bawah.php";
-    try {
-      final response = await http.get(Uri.parse(endpoint)).timeout(
-            const Duration(seconds: 8),
-          );
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        if (data != null &&
-            data['status'] == "success" &&
-            data['data'] != null) {
-          setState(() {
-            circleMenus = data['data'];
-            isLoadingMenus = false;
-          });
-
-          // simpan ke SharedPreferences agar cache
-          SharedPreferences prefs = await SharedPreferences.getInstance();
-          prefs.setString('circleMenus', json.encode(data['data']));
-          return;
-        }
-      }
-    } catch (e) {
-      debugPrint("fetchCircleMenus error: $e");
-    }
-
-    // Fallback: gunakan menu lokal jika API gagal dan cache kosong
-    if (circleMenus.isEmpty) {
+  Future<void> _loadBooks() async {
+    final prefs = await SharedPreferences.getInstance();
+    final data = prefs.getString("books");
+    if (data != null) {
       setState(() {
-        circleMenus = _defaultCircleMenus;
-        isLoadingMenus = false;
+        _books = List<Map<String, dynamic>>.from(json.decode(data));
       });
     }
   }
 
-  Future<void> openTelegram() async {
-    final Uri url = Uri.parse("https://t.me/xcreatecode");
-    if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Tidak bisa membuka link Telegram")),
-      );
-    }
+  Future<void> _saveBooks() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString("books", json.encode(_books));
   }
 
-  Future<void> openXcreateWebsite() async {
-    final Uri url = Uri.parse("https://t.me/xcreatecode");
-    if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text("Tidak bisa membuka link website Xcreate")),
-      );
-    }
-  }
+  void _addBookDialog({Map<String, dynamic>? book, int? index}) {
+    final titleController = TextEditingController(
+      text: book != null ? book["title"] : "",
+    );
+    final authorController = TextEditingController(
+      text: book != null ? book["author"] : "",
+    );
 
-  void onMenuTap(String title) {
-    String route = '';
-    switch (title) {
-      case 'Riwayat Pembayaran':
-        route = '/dashboard';
-        break;
-      case 'Riwayat Transfer':
-        route = '/riwayat_transfer';
-        break;
-      case 'Riwayat Midtrans':
-        route = '/riwayat_midtrans';
-        break;
-      case 'Atur Koneksi Midtrans':
-        route = '/koneksi_midtrans';
-        break;
-      case 'Tambah Pembayaran':
-        route = '/tambah_pembayaran_pg';
-        break;
-      case 'Atur Koneksi':
-        route = '/atur_koneksi_pg';
-        break;
-      case 'Koneksi Transfer':
-        route = '/koneksi_transfer_saldo';
-        break;
-      case 'Upload Produk':
-        route = '/upload_produk';
-        break;
-        case 'Ambil Notiikasi':
-        route = '/user_notif';
-        break;
-      default:
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Menu '$title' Masih Dalam Pengembangan.")),
-        );
-        return;
-    }
-    Navigator.pushNamed(context, route);
-  }
-
-  Widget buildMenuCard(Map<String, dynamic> item) {
-    return InkWell(
-      onTap: () => onMenuTap(item['title']),
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        width: 110,
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: const [
-            BoxShadow(
-                color: Colors.black12, blurRadius: 6, offset: Offset(0, 3)),
-          ],
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(book == null ? "Tambah Buku" : "Edit Buku"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            CircleAvatar(
-              radius: 30,
-              backgroundColor: Colors.deepPurple.withOpacity(0.1),
-              child: Icon(item['icon'], size: 28, color: Colors.deepPurple),
+            TextField(
+              controller: titleController,
+              decoration: const InputDecoration(labelText: "Judul Buku"),
             ),
-            const SizedBox(height: 10),
-            Text(
-              item['title'],
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: 14,
-                color: Colors.deepPurple,
-              ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+            TextField(
+              controller: authorController,
+              decoration: const InputDecoration(labelText: "Penulis"),
             ),
           ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Batal"),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (titleController.text.isNotEmpty &&
+                  authorController.text.isNotEmpty) {
+                if (book == null) {
+                  _books.add({
+                    "id": DateTime.now().millisecondsSinceEpoch,
+                    "title": titleController.text,
+                    "author": authorController.text,
+                  });
+                } else {
+                  _books[index!] = {
+                    "id": book["id"],
+                    "title": titleController.text,
+                    "author": authorController.text,
+                  };
+                }
+                _saveBooks();
+                setState(() {});
+                Navigator.pop(context);
+              }
+            },
+            child: const Text("Simpan"),
+          ),
+        ],
       ),
     );
   }
 
-  Widget buildCircleMenuGrid() {
-    if (isLoadingMenus) {
-      return SizedBox(
-        height: 160,
-        child:
-            Center(child: CircularProgressIndicator(color: Colors.deepPurple)),
-      );
-    }
+  void _deleteBook(int index) {
+    final removed = _books.removeAt(index);
+    _saveBooks();
+    setState(() {});
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Buku "${removed['title']}" dihapus')),
+    );
+  }
 
-    return GridView.builder(
-      padding: const EdgeInsets.all(0),
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: circleMenus.length,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 4,
-        childAspectRatio: 0.9,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-      ),
-      itemBuilder: (context, index) {
-        final item = circleMenus[index];
-        final title = item['nama_menu'] ?? item['title'] ?? 'Menu';
-        final iconName = (item['icon'] ?? '').toString();
-        final urlPage = item['url_page'] ?? item['url'] ?? '';
+  Future<void> _exportBookToPdf(Map<String, dynamic> book) async {
+    final id = book['id'] as int;
+    try {
+      setState(() => _exporting[id] = true);
 
-        return InkWell(
-          onTap: () {
-            if (urlPage != null && urlPage.toString().isNotEmpty) {
-              Navigator.push(
-                context,
-                PageRouteBuilder(
-                  pageBuilder: (context, animation, secondaryAnimation) =>
-                      DetailMenuPage(title: title, url: urlPage),
-                  transitionsBuilder:
-                      (context, animation, secondaryAnimation, child) {
-                    const begin = Offset(1.0, 0.0); // dari kanan ke kiri
-                    const end = Offset.zero;
-                    const curve = Curves.easeInOut;
+      final prefs = await SharedPreferences.getInstance();
+      final pagesData = prefs.getString('book_content_$id');
+      List<String> pages;
+      if (pagesData != null) {
+        pages = List<String>.from(json.decode(pagesData));
+      } else {
+        pages = [''];
+      }
 
-                    var tween = Tween(begin: begin, end: end)
-                        .chain(CurveTween(curve: curve));
-                    return SlideTransition(
-                      position: animation.drive(tween),
-                      child: child,
-                    );
-                  },
-                  transitionDuration:
-                      const Duration(milliseconds: 600), // durasi animasi
+      final doc = pw.Document();
+
+      // Buat satu section per halaman (akan otomatis pecah kalau terlalu panjang)
+      doc.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4,
+          build: (pw.Context context) {
+            final List<pw.Widget> content = [];
+            for (var i = 0; i < pages.length; i++) {
+              content.add(
+                pw.Header(level: 1, child: pw.Text('Halaman ${i + 1}')),
+              );
+              final text = pages[i].isNotEmpty ? pages[i] : '(Halaman kosong)';
+              content.add(
+                pw.Padding(
+                  padding: const pw.EdgeInsets.only(bottom: 12),
+                  child: pw.Text(
+                    text,
+                    style: pw.TextStyle(fontSize: 12),
+                    textAlign: pw.TextAlign.justify,
+                  ),
                 ),
               );
-            } else {
-              onMenuTap(title);
+              // pemisah visual antar halaman di PDF
+              content.add(pw.Divider());
             }
+            return content;
           },
-          borderRadius: BorderRadius.circular(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircleAvatar(
-                radius: 28,
-                backgroundColor: Colors.deepPurple.withOpacity(0.1),
-                child: Icon(_getIcon(iconName),
-                    color: Colors.deepPurple, size: 26),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                title,
-                textAlign: TextAlign.center,
-                style:
-                    const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
+        ),
+      );
 
-  IconData _getIcon(String iconName) {
-    switch (iconName) {
-      case 'home':
-        return Icons.home;
-      case 'dashboard':
-        return Icons.dashboard;
-      case 'settings':
-        return Icons.settings;
-      case 'person':
-        return Icons.person;
-      case 'account_circle':
-        return Icons.account_circle;
-      case 'login':
-        return Icons.login;
-      case 'logout':
-        return Icons.logout;
-      case 'search':
-        return Icons.search;
-      case 'favorite':
-        return Icons.favorite;
-      case 'shopping_cart':
-        return Icons.shopping_cart;
-      case 'payment':
-        return Icons.payment;
-      case 'credit_card':
-        return Icons.credit_card;
-      case 'wallet':
-        return Icons.account_balance_wallet;
-      case 'upload':
-        return Icons.upload;
-      case 'download':
-        return Icons.download;
-      case 'file':
-        return Icons.insert_drive_file;
-      case 'upload_file':
-        return Icons.upload_file;
-      case 'image':
-        return Icons.image;
-      case 'photo':
-        return Icons.photo;
-      case 'camera':
-        return Icons.camera_alt;
-      case 'chat':
-        return Icons.chat;
-      case 'message':
-        return Icons.message;
-      case 'notifications':
-        return Icons.notifications;
-      case 'mail':
-        return Icons.mail;
-      case 'link':
-        return Icons.link;
-      case 'lock':
-        return Icons.lock;
-      case 'unlock':
-        return Icons.lock_open;
-      case 'map':
-        return Icons.map;
-      case 'location':
-        return Icons.location_on;
-      case 'gps':
-        return Icons.gps_fixed;
-      case 'calendar':
-        return Icons.calendar_today;
-      case 'event':
-        return Icons.event;
-      case 'bookmark':
-        return Icons.bookmark;
-      case 'star':
-        return Icons.star;
-      case 'edit':
-        return Icons.edit;
-      case 'delete':
-        return Icons.delete;
-      case 'add':
-        return Icons.add;
-      case 'remove':
-        return Icons.remove;
-      case 'save':
-        return Icons.save;
-      case 'share':
-        return Icons.share;
-      case 'qr_code':
-        return Icons.qr_code;
-      case 'barcode':
-        return Icons.qr_code_2;
-      case 'history':
-        return Icons.history;
-      case 'help':
-        return Icons.help;
-      case 'info':
-        return Icons.info;
-      case 'security':
-        return Icons.security;
-      case 'admin':
-        return Icons.admin_panel_settings;
-      case 'list':
-        return Icons.list;
-      case 'menu':
-        return Icons.menu;
-      case 'more':
-        return Icons.more_horiz;
-      case 'category':
-        return Icons.category;
-      case 'store':
-        return Icons.store;
-      case 'inventory':
-        return Icons.inventory;
-      case 'analytics':
-        return Icons.analytics;
-      case 'chart':
-        return Icons.bar_chart;
-      case 'pie_chart':
-        return Icons.pie_chart;
-      case 'cloud':
-        return Icons.cloud;
-      case 'cloud_upload':
-        return Icons.cloud_upload;
-      case 'cloud_download':
-        return Icons.cloud_download;
-      case 'people':
-        return Icons.people;
-      case 'group':
-        return Icons.group;
-      case 'support':
-        return Icons.support;
-      case 'call':
-        return Icons.call;
-      case 'phone':
-        return Icons.phone;
-      case 'telegram':
-        return Icons.telegram;
-      case 'code':
-        return Icons.code;
-      case 'send':
-        return Icons.send;
-      case 'phone_android':
-        return Icons.phone_android;
-      default:
-        return Icons.circle;
+      final bytes = await doc.save();
+
+      // Menggunakan printing untuk share / save
+      await Printing.sharePdf(bytes: bytes, filename: '${book['title']}.pdf');
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Berhasil mengekspor "${book['title']}" ke PDF'),
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Gagal mengekspor: $e')));
+    } finally {
+      setState(() => _exporting[id] = false);
     }
   }
-
-  Widget buildListTile(Map<String, dynamic> item) {
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      elevation: 2,
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: Colors.deepPurple.withOpacity(0.1),
-          child: Icon(item['icon'], color: Colors.deepPurple),
-        ),
-        title: Text(
-          item['title'],
-          style: const TextStyle(fontWeight: FontWeight.w600),
-        ),
-        onTap: () => onMenuTap(item['title']),
-        trailing: const Icon(Icons.arrow_forward_ios,
-            size: 16, color: Colors.deepPurple),
-      ),
-    );
-  }
-
-  Widget buildPromotionCard() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      margin: const EdgeInsets.only(bottom: 20),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Colors.purpleAccent, Colors.deepPurple],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: const [
-          BoxShadow(color: Colors.black26, blurRadius: 6, offset: Offset(0, 3)),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.campaign, color: Colors.white, size: 40),
-          const SizedBox(height: 10),
-          const Text(
-            "Gabung ke Channel Xcreate Code untuk mendapatkan Info terbaru!",
-            style: TextStyle(
-                color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 12),
-          ElevatedButton.icon(
-            onPressed: openXcreateWebsite,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.white,
-              foregroundColor: Colors.deepPurple,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
-            ),
-            icon: const Icon(Icons.rocket),
-            label: const Text("Gabung Channel"),
-          ),
-        ],
-      ),
-    );
-  }
-
-  TextStyle get titleStyle => TextStyle(
-        fontWeight: FontWeight.bold,
-        fontSize: 18,
-        color: Colors.deepPurple[700],
-      );
 
   @override
   Widget build(BuildContext context) {
-    List<Map<String, dynamic>> menuItems = [
-      {"title": "Riwayat Pembayaran", "icon": Icons.credit_card},
-      {"title": "Riwayat Midtrans", "icon": Icons.attach_money},
-      {"title": "Riwayat Transfer", "icon": Icons.swap_horiz},
-    ];
-
-    List<Map<String, dynamic>> midtranskustom = [
-      {
-        "title": "Atur Koneksi Midtrans",
-        "icon": Icons.settings_input_component
-      },
-    ];
-
-    List<Map<String, dynamic>> paymentGatewayMenu = [
-      {"title": "Tambah Pembayaran", "icon": Icons.add_card},
-      {"title": "Atur Koneksi", "icon": Icons.settings_input_component},
-      {"title": "Ambil Notiikasi", "icon": Icons.notification_important},
-    ];
-
-    List<Map<String, dynamic>> transferSaldoMenu = [
-      {"title": "Koneksi Transfer", "icon": Icons.link},
-    ];
+    final filteredBooks = _books
+        .where(
+          (b) => b["title"].toString().toLowerCase().contains(
+            _searchQuery.toLowerCase(),
+          ),
+        )
+        .toList();
 
     return Scaffold(
-      backgroundColor: Colors.grey[100],
+      backgroundColor: const Color(0xFFF6F9FF),
+      appBar: AppBar(
+        elevation: 0,
+        backgroundColor: Colors.white,
+        title: const Text(
+          "Daftar Buku",
+          style: TextStyle(color: Colors.black87, fontWeight: FontWeight.w600),
+        ),
+        centerTitle: false,
+        iconTheme: const IconThemeData(color: Colors.black87),
+      ),
       body: SafeArea(
-        child: RefreshIndicator(
-          // ✅ Tarik ke bawah untuk refresh
-          onRefresh: () async {
-            await fetchCircleMenus();
-          },
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              Container(
-                padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            // Search bar modern
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16.0,
+                vertical: 12,
+              ),
+              child: Container(
                 decoration: BoxDecoration(
                   gradient: const LinearGradient(
-                    colors: [Colors.deepPurple, Colors.purpleAccent],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
+                    colors: [Color(0xFFB2FEFA), Color(0xFF0ED2F7)],
                   ),
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: const [
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
                     BoxShadow(
-                        color: Colors.black26,
-                        blurRadius: 6,
-                        offset: Offset(0, 3)),
+                      color: Colors.black12,
+                      blurRadius: 8,
+                      offset: Offset(0, 4),
+                    ),
                   ],
                 ),
-                child: Row(
-                  children: [
-                    const CircleAvatar(
-                      radius: 30,
-                      backgroundColor: Colors.white,
-                      child: Icon(Icons.account_circle,
-                          size: 50, color: Colors.deepPurple),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        "Halo, $username",
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                        ),
+                child: TextField(
+                  onChanged: (v) => setState(() => _searchQuery = v),
+                  decoration: InputDecoration(
+                    prefixIcon: const Icon(Icons.search, color: Colors.white70),
+                    hintText: "Cari judul buku...",
+                    hintStyle: const TextStyle(color: Colors.white70),
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+
+            // Header kecil
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0),
+              child: Row(
+                children: [
+                  const Text(
+                    'Hasil',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${filteredBooks.length} buku',
+                    style: const TextStyle(color: Colors.grey),
+                  ),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: () async {
+                      // Refresh manual
+                      await _loadBooks();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Daftar diperbarui')),
+                      );
+                    },
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Refresh'),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 8),
+
+            // List buku
+            Expanded(
+              child: filteredBooks.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.book_outlined,
+                            size: 64,
+                            color: Colors.grey[300],
+                          ),
+                          const SizedBox(height: 12),
+                          const Text(
+                            'Belum ada buku',
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                        ],
                       ),
+                    )
+                  : ListView.separated(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                      itemCount: filteredBooks.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 12),
+                      itemBuilder: (context, index) {
+                        final book = filteredBooks[index];
+                        final int id = book['id'] as int;
+                        final bool exporting = _exporting[id] ?? false;
+
+                        // warna gradien acak berdasarkan index untuk variasi
+                        final gradients = [
+                          [Color(0xFFFFD6A5), Color(0xFFFFABAB)],
+                          [Color(0xFFB2FEFA), Color(0xFF0ED2F7)],
+                          [Color(0xFFC6FFDD), Color(0xFFFBD786)],
+                          [Color(0xFFB4EC51), Color(0xFF429321)],
+                        ];
+                        final grad = gradients[index % gradients.length];
+
+                        return GestureDetector(
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => DetailPage(bookId: id),
+                              ),
+                            );
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(colors: grad),
+                              borderRadius: BorderRadius.circular(14),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black12,
+                                  blurRadius: 8,
+                                  offset: Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            child: Row(
+                              children: [
+                                // Icon / cover
+                                Container(
+                                  width: 56,
+                                  height: 72,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white24,
+                                    borderRadius: BorderRadius.circular(8),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black12,
+                                        blurRadius: 6,
+                                        offset: Offset(0, 3),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      (book['title'] ?? '')
+                                          .toString()
+                                          .split(' ')
+                                          .map((w) => w.isNotEmpty ? w[0] : '')
+                                          .take(2)
+                                          .join()
+                                          .toUpperCase(),
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 18,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                // Title & author
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        book['title'] ?? '',
+                                        style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        book['author'] ?? '',
+                                        style: const TextStyle(
+                                          fontSize: 13,
+                                          color: Colors.black87,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Row(
+                                        children: [
+                                          Icon(
+                                            Icons.notes,
+                                            size: 14,
+                                            color: Colors.black54,
+                                          ),
+                                          const SizedBox(width: 6),
+                                          FutureBuilder<String>(
+                                            future: _getPageCountText(
+                                              book['id'] as int,
+                                            ),
+                                            builder: (context, snap) {
+                                              final txt = snap.hasData
+                                                  ? snap.data!
+                                                  : '...';
+                                              return Text(
+                                                txt,
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                  color: Colors.black54,
+                                                ),
+                                              );
+                                            },
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+
+                                // Buttons: download, edit, delete
+                                Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    exporting
+                                        ? SizedBox(
+                                            width: 36,
+                                            height: 36,
+                                            child:
+                                                const CircularProgressIndicator(
+                                                  strokeWidth: 2,
+                                                ),
+                                          )
+                                        : IconButton(
+                                            onPressed: () async {
+                                              await _exportBookToPdf(book);
+                                            },
+                                            icon: const Icon(
+                                              Icons.download_rounded,
+                                            ),
+                                            tooltip:
+                                                'Download semua halaman ke PDF',
+                                          ),
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        IconButton(
+                                          icon: const Icon(
+                                            Icons.edit,
+                                            color: Colors.blue,
+                                          ),
+                                          onPressed: () {
+                                            // Need to find original index in _books (filteredBooks uses subset)
+                                            final originalIndex = _books
+                                                .indexWhere(
+                                                  (b) => b['id'] == book['id'],
+                                                );
+                                            _addBookDialog(
+                                              book: book,
+                                              index: originalIndex >= 0
+                                                  ? originalIndex
+                                                  : null,
+                                            );
+                                          },
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(
+                                            Icons.delete,
+                                            color: Colors.red,
+                                          ),
+                                          onPressed: () {
+                                            final originalIndex = _books
+                                                .indexWhere(
+                                                  (b) => b['id'] == book['id'],
+                                                );
+                                            if (originalIndex >= 0)
+                                              _deleteBook(originalIndex);
+                                          },
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.telegram,
-                          color: Colors.white, size: 28),
-                      onPressed: openTelegram,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                height: 150,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: menuItems.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 14),
-                  itemBuilder: (context, index) {
-                    return buildMenuCard(menuItems[index]);
-                  },
-                ),
-              ),
-              const SizedBox(height: 20),
-              buildCircleMenuGrid(),
-              const SizedBox(height: 25),
-              buildPromotionCard(),
-              const SizedBox(height: 20),
-              Text("Payment Gateway", style: titleStyle),
-              const SizedBox(height: 10),
-              ...paymentGatewayMenu.map(buildListTile),
-              const SizedBox(height: 20),
-              Text("Midtrans Core Api", style: titleStyle),
-              const SizedBox(height: 10),
-              ...midtranskustom.map(buildListTile),
-              const SizedBox(height: 20),
-              Text("Transfer Saldo", style: titleStyle),
-              const SizedBox(height: 10),
-              ...transferSaldoMenu.map(buildListTile),
-              const SizedBox(height: 20),
-            ],
-          ),
+            ),
+          ],
         ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        backgroundColor: Colors.teal,
+        onPressed: () => _addBookDialog(),
+        child: const Icon(Icons.add),
       ),
     );
   }
-}
 
-/// Default local circle menus jika API down
-final List<Map<String, dynamic>> _defaultCircleMenus = [
-  {},
-];
+  Future<String> _getPageCountText(int bookId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final pagesData = prefs.getString('book_content_$bookId');
+    if (pagesData == null) return '0 halaman';
+    try {
+      final pages = List<String>.from(json.decode(pagesData));
+      return '${pages.length} halaman';
+    } catch (_) {
+      return '0 halaman';
+    }
+  }
+}
