@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'buku/home.dart'; // import file home.dart
+import 'home.dart'; // import file home.dart
 
 void main() {
   runApp(const MyApp());
