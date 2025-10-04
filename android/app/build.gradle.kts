@@ -1,19 +1,19 @@
 plugins {
     id("com.android.application")
     id("kotlin-android")
-    // Flutter Gradle Plugin harus setelah Android dan Kotlin plugin
+    // Flutter Gradle Plugin harus dipanggil terakhir
     id("dev.flutter.flutter-gradle-plugin")
 }
 
 android {
     namespace = "com.example.myxcreate"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion // ✅ tetap gunakan NDK dari Flutter
+    ndkVersion = flutter.ndkVersion // ✅ gunakan NDK bawaan Flutter
 
     defaultConfig {
         applicationId = "com.example.myxcreate"
 
-        // Fix minSdk agar cocok dengan plugin modern
+        // ✅ minSdk 23 supaya kompatibel dengan plugin modern (WorkManager, ForegroundService)
         minSdk = 23
         targetSdk = flutter.targetSdkVersion
 
@@ -24,7 +24,7 @@ android {
     }
 
     compileOptions {
-        // ✅ Aktifkan desugaring untuk Java 8 compatibility
+        // ✅ aktifkan Java 11 dengan desugaring
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
         isCoreLibraryDesugaringEnabled = true
@@ -38,8 +38,8 @@ android {
         create("release") {
             storeFile = file("my-release-key.jks")   // path ke keystore
             storePassword = "ardigg12"               // password keystore
-            keyAlias = "myalias"                     // alias
-            keyPassword = "ardigg12"                 // password alias
+            keyAlias = "myalias"                     // alias key
+            keyPassword = "ardigg12"                 // password key
         }
     }
 
@@ -68,24 +68,24 @@ flutter {
 }
 
 dependencies {
-    // ✅ Update versi desugar_jdk_libs agar sesuai requirement terbaru
+    // ✅ Desugaring untuk Java 8+ API
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 
-    // Multidex
+    // ✅ Multidex agar tidak error 64K methods
     implementation("androidx.multidex:multidex:2.0.1")
 
-    // AndroidX dasar
+    // ✅ AndroidX dasar
     implementation("androidx.core:core-ktx:1.10.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.11.0")
 
-    // WorkManager
+    // ✅ WorkManager untuk background tasks (posting notifikasi ke URL)
     implementation("androidx.work:work-runtime-ktx:2.8.1")
 
-    // Lifecycle & coroutine
+    // ✅ Lifecycle & coroutine (jalan bareng WorkManager/ForegroundService)
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
-    // ✅ OkHttp untuk HTTP POST di AccessibilityService
+    // ✅ OkHttp untuk HTTP POST ke server
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }
