@@ -4,14 +4,26 @@
     package="com.example.myxcreate">
 
     <!-- ================== PERMISSIONS ================== -->
+    <!-- General -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
-    <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE" />
     <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Notifications (Android 13+ requires runtime POST_NOTIFICATIONS) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Foreground service (if you use native foreground services) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
+    <!-- Keep device awake if needed (uses with caution) -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Receive boot completed to restart services on device boot -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- NOTE:
+         Do NOT add BIND_NOTIFICATION_LISTENER_SERVICE or BIND_ACCESSIBILITY_SERVICE here as uses-permission.
+         Those are "bind" permissions assigned to the <service> declaration below.
+    -->
 
     <!-- ================== QUERIES ================== -->
     <queries>
@@ -27,7 +39,7 @@
             <data android:mimeType="text/plain" />
         </intent>
 
-        <!-- Target apps -->
+        <!-- Target apps (optional) -->
         <package android:name="com.whatsapp" />
         <package android:name="com.whatsapp.w4b" />
         <package android:name="org.telegram.messenger" />
@@ -64,7 +76,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Deep link -->
+            <!-- Deep link example -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -74,6 +86,7 @@
         </activity>
 
         <!-- ===== Foreground Service (flutter_foreground_task) ===== -->
+        <!-- Keep exported=false to avoid other apps starting your foreground service -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
             android:foregroundServiceType="dataSync|connectedDevice|mediaProjection"
@@ -93,7 +106,21 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
-        <!-- ===== Notification Listener Service (XCApp custom) ===== -->
+        <!-- ===== Notification Listener Service (plugin-provided, keep if using the plugin) ===== -->
+        <!-- The notification_listener_service plugin may require this exact service declaration: -->
+        <service
+            android:name="notification.listener.service.NotificationListener"
+            android:label="notifications"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- ===== Notification Listener Service (custom native implementation) ===== -->
+        <!-- If you implemented a custom NotificationListener in native (Kotlin/Java), keep this too.
+             Ensure class .AppNotificationService exists under android/app/src/main/java/... -->
         <service
             android:name=".AppNotificationService"
             android:label="XCApp Notifications"
@@ -104,7 +131,7 @@
             </intent-filter>
         </service>
 
-        <!-- ===== Background Receiver untuk Boot Completed ===== -->
+        <!-- ===== Background Receiver for BOOT_COMPLETED ===== -->
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"
@@ -114,7 +141,7 @@
             </intent-filter>
         </receiver>
 
-        <!-- ===== Notification Channel untuk flutter_local_notifications / awesome_notifications ===== -->
+        <!-- ===== flutter_local_notifications broadcast receivers ===== -->
         <receiver
             android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"
             android:exported="false" />
