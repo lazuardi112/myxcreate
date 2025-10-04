@@ -9,6 +9,7 @@ import android.os.Build
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import okhttp3.*
@@ -22,7 +23,6 @@ class MyNotificationListenerService : NotificationListenerService() {
         private const val CHANNEL_NAME = "XC Listener Service"
         private const val ONGOING_NOTIFICATION_ID = 9999
 
-        // keys — sama dengan Flutter
         private const val K_PREFS_SELECTED_APPS = "xc_selected_apps"
         private const val K_PREFS_POST_URL = "xc_post_url"
         private const val K_PREFS_SAVED_NOTIFICATIONS = "xc_saved_notifications"
@@ -41,8 +41,7 @@ class MyNotificationListenerService : NotificationListenerService() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        // ensure there is a foreground notification so process less likely to be killed
-        startForegroundPersistent("XC Listener aktif")
+        startForegroundPersistent("XC Listener siap")
         Log.i(TAG, "Service created")
     }
 
@@ -57,28 +56,23 @@ class MyNotificationListenerService : NotificationListenerService() {
 
     private fun startForegroundPersistent(text: String) {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            android.app.Notification.Builder(this, CHANNEL_ID)
-        } else {
-            android.app.Notification.Builder(this)
-        }
-        val notif = builder
-            .setContentTitle("XC Listener aktif")
+        val notif = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("XC Listener Service")
             .setContentText(text)
             .setSmallIcon(applicationInfo.icon)
             .setOngoing(true)
             .setAutoCancel(false)
             .build()
-        startForeground(ONGOING_NOTIFICATION_ID, notif)
+        startForeground(ONGOING_NOTIFICATION_ID, notif as Notification)
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         try {
             if (sbn == null) return
             val prefs = getSharedPreferences(FLUTTER_PREFS_NAME, Context.MODE_PRIVATE)
-            val enabled = prefs.getBoolean(K_PREFS_ENABLED, true)
+            val enabled = prefs.getBoolean(K_PREFS_ENABLED, false)
             if (!enabled) {
-                Log.i(TAG, "Listener disabled by user flag; ignoring notification")
+                Log.i(TAG, "Listener disabled by flag; ignoring")
                 return
             }
 
@@ -87,13 +81,12 @@ class MyNotificationListenerService : NotificationListenerService() {
             val title = extras.getString("android.title") ?: ""
             val text = extras.getCharSequence("android.text")?.toString() ?: ""
 
-            // selected apps: try getStringSet first, then fallback to JSON string stored by Flutter
-            val selectedSet = prefs.getStringSet(K_PREFS_SELECTED_APPS, null)
+            // selected apps logic (StringSet or JSON fallback)
             var allowed = true
+            val selectedSet = prefs.getStringSet(K_PREFS_SELECTED_APPS, null)
             if (selectedSet != null && selectedSet.isNotEmpty()) {
                 allowed = selectedSet.contains(pkg)
             } else {
-                // try to read string list stored as JSON by some implementations
                 val raw = prefs.getString(K_PREFS_SELECTED_APPS, null)
                 if (!raw.isNullOrEmpty()) {
                     try {
@@ -109,19 +102,13 @@ class MyNotificationListenerService : NotificationListenerService() {
                 return
             }
 
-            Log.i(TAG, "Posted: $pkg | $title | $text")
-
-            // Save notification to prefs (prepend)
             saveNotificationToPrefs(sbn.id, pkg, title, text)
 
-            // Update persistent text (count + last)
             val count = getSavedCount(prefs)
             startForegroundPersistent("$pkg — ${if (title.isNotBlank()) title else text} ($count)")
 
-            // Optionally show a one-shot event notification (native)
             showEventNotification(title, text)
 
-            // Send POST if URL configured
             val postUrl = prefs.getString(K_PREFS_POST_URL, "") ?: ""
             if (postUrl.trim().isNotEmpty()) {
                 postToUrl(postUrl.trim(), pkg, title, text)
@@ -133,7 +120,6 @@ class MyNotificationListenerService : NotificationListenerService() {
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
         if (sbn == null) return
-        // mark removed in stored list (optional)
         try {
             markNotificationRemoved(sbn.id, sbn.packageName ?: "unknown")
         } catch (e: Exception) {
@@ -167,8 +153,7 @@ class MyNotificationListenerService : NotificationListenerService() {
     }
 
     private fun getSavedCount(prefs: SharedPreferences): Int {
-        val raw = prefs.getString(K_PREFS_SAVED_NOTIFICATIONS, null)
-        if (raw.isNullOrEmpty()) return 0
+        val raw = prefs.getString(K_PREFS_SAVED_NOTIFICATIONS, null) ?: return 0
         return try {
             val type = object : TypeToken<List<Map<String, Any?>>>() {}.type
             val list: List<Map<String, Any?>> = gson.fromJson(raw, type)
@@ -205,19 +190,14 @@ class MyNotificationListenerService : NotificationListenerService() {
 
     private fun showEventNotification(title: String?, body: String?) {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val notifBuilder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, CHANNEL_ID)
-        } else {
-            Notification.Builder(this)
-        }
-        val n = notifBuilder
+        val notif = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(applicationInfo.icon)
             .setContentTitle(title ?: "Notification")
             .setContentText(body ?: "")
             .setAutoCancel(true)
             .build()
         val id = (System.currentTimeMillis() % 100000).toInt()
-        nm.notify(id, n)
+        nm.notify(id, notif)
     }
 
     private fun postToUrl(url: String, pkg: String, title: String?, text: String?) {
