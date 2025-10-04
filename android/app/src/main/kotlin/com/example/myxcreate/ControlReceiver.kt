@@ -23,10 +23,10 @@ class ControlReceiver : BroadcastReceiver() {
             ForegroundStarterService.ACTION_STOP -> {
                 prefs.edit().putBoolean(K_PREFS_ENABLED, false).apply()
                 Log.i(TAG, "ControlReceiver: STOP -> enabled=false")
+                val svc = Intent(context, ForegroundStarterService::class.java)
+                context.stopService(svc)
             }
-            else -> {
-                // ignore
-            }
+            else -> { }
         }
     }
 }
