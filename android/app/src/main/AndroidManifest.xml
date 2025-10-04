@@ -4,28 +4,26 @@
     package="com.example.myxcreate">
 
     <!-- ================== PERMISSIONS ================== -->
-    <!-- General -->
+    <!-- Internet & Vibrate -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.VIBRATE" />
 
-    <!-- Notifications (Android 13+ requires runtime POST_NOTIFICATIONS) -->
+    <!-- Notifications -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Foreground service (if you use native foreground services) -->
+    <!-- Foreground services -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
-    <!-- Keep device awake if needed (uses with caution) -->
+    <!-- Keep device awake if needed -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
-    <!-- Receive boot completed to restart services on device boot -->
+    <!-- Restart service after boot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <!-- NOTE:
-         Do NOT add BIND_NOTIFICATION_LISTENER_SERVICE or BIND_ACCESSIBILITY_SERVICE here as uses-permission.
-         Those are "bind" permissions assigned to the <service> declaration below.
-    -->
-
-    <!-- ================== QUERIES ================== -->
+    <!-- ================== QUERIES (needed for installed_apps, intent, etc.) ================== -->
     <queries>
         <!-- Launcher intent -->
         <intent>
@@ -39,7 +37,7 @@
             <data android:mimeType="text/plain" />
         </intent>
 
-        <!-- Target apps (optional) -->
+        <!-- Target apps (optional, bisa ditambah sesuai kebutuhan) -->
         <package android:name="com.whatsapp" />
         <package android:name="com.whatsapp.w4b" />
         <package android:name="org.telegram.messenger" />
@@ -76,7 +74,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Deep link example -->
+            <!-- Deep link -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -85,14 +83,36 @@
             </intent-filter>
         </activity>
 
-        <!-- ===== Foreground Service (flutter_foreground_task) ===== -->
-        <!-- Keep exported=false to avoid other apps starting your foreground service -->
+        <!-- ===== FOREGROUND SERVICE (flutter_foreground_task) ===== -->
+        <!-- Ini notifikasi lokal yang selalu tampil (persistent notification) -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
             android:foregroundServiceType="dataSync|connectedDevice|mediaProjection"
             android:exported="false" />
 
-        <!-- ===== Accessibility Service (flutter_accessibility_service) ===== -->
+        <!-- ===== Notification Listener Service (plugin bawaan) ===== -->
+        <service
+            android:name="notification.listener.service.NotificationListener"
+            android:label="notifications"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- ===== Custom Notification Listener (jika ada implementasi Java/Kotlin sendiri) ===== -->
+        <service
+            android:name=".AppNotificationService"
+            android:label="XCApp Notifications"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- ===== Accessibility Service (opsional, jika dipakai) ===== -->
         <service
             android:name="slayer.accessibility.service.flutter_accessibility_service.FlutterAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
@@ -106,32 +126,7 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
-        <!-- ===== Notification Listener Service (plugin-provided, keep if using the plugin) ===== -->
-        <!-- The notification_listener_service plugin may require this exact service declaration: -->
-        <service
-            android:name="notification.listener.service.NotificationListener"
-            android:label="notifications"
-            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.service.notification.NotificationListenerService" />
-            </intent-filter>
-        </service>
-
-        <!-- ===== Notification Listener Service (custom native implementation) ===== -->
-        <!-- If you implemented a custom NotificationListener in native (Kotlin/Java), keep this too.
-             Ensure class .AppNotificationService exists under android/app/src/main/java/... -->
-        <service
-            android:name=".AppNotificationService"
-            android:label="XCApp Notifications"
-            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.service.notification.NotificationListenerService" />
-            </intent-filter>
-        </service>
-
-        <!-- ===== Background Receiver for BOOT_COMPLETED ===== -->
+        <!-- ===== BOOT RECEIVER (restart service setelah reboot) ===== -->
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"
@@ -141,7 +136,7 @@
             </intent-filter>
         </receiver>
 
-        <!-- ===== flutter_local_notifications broadcast receivers ===== -->
+        <!-- ===== flutter_local_notifications (broadcast receiver) ===== -->
         <receiver
             android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"
             android:exported="false" />
@@ -156,7 +151,7 @@
             </intent-filter>
         </receiver>
 
-        <!-- Flutter embedding metadata -->
+        <!-- ===== Flutter embedding metadata ===== -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
