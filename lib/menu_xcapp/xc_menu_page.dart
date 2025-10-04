@@ -1,4 +1,4 @@
-// xc_menu_page.dart
+// lib/menu_xcapp/xc_menu_page.dart
 import 'dart:async';
 import 'dart:developer';
 import 'package:flutter/material.dart';
@@ -13,10 +13,13 @@ class XcMenuPage extends StatefulWidget {
   State<XcMenuPage> createState() => _XcMenuPageState();
 }
 
-class _XcMenuPageStateHelper {
+/// Helper untuk inisialisasi dan menampilkan notifikasi lokal.
+/// Nama kelas ini sengaja public (tanpa leading underscore) agar referensi jelas.
+class XcMenuStateHelper {
   static final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
       FlutterLocalNotificationsPlugin();
 
+  // channel identifiers
   static const String channelId = 'xc_channel_id';
   static const String channelName = 'XC Notifications';
   static const String channelDescription = 'Channel for XC foreground notifications';
@@ -27,6 +30,7 @@ class _XcMenuPageStateHelper {
 
     final InitializationSettings initSettings = InitializationSettings(
       android: androidInit,
+      // iOS/macOS omitted: plugin is Android-focused here.
     );
 
     await flutterLocalNotificationsPlugin.initialize(initSettings);
@@ -44,21 +48,31 @@ class _XcMenuPageStateHelper {
         ?.createNotificationChannel(channel);
   }
 
+  static Future<void> requestAndroidPostNotificationsPermission() async {
+    try {
+      await flutterLocalNotificationsPlugin
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>()
+          ?.requestPermission();
+    } catch (e) {
+      log('requestPermission error: $e');
+    }
+  }
+
   static Future<void> showPersistentNotification({
     required int id,
     required String title,
     required String body,
   }) async {
-    // Persistent / ongoing notification config:
     final androidDetails = AndroidNotificationDetails(
       channelId,
       channelName,
       channelDescription: channelDescription,
       importance: Importance.defaultImportance,
       priority: Priority.defaultPriority,
-      ongoing: true,        // the important bit
-      autoCancel: false,    // don't auto cancel on tap
-      onlyAlertOnce: true,  // don't repeatedly make sound/vibrate when updating
+      ongoing: true,
+      autoCancel: false,
+      onlyAlertOnce: true,
     );
 
     final details = NotificationDetails(android: androidDetails);
@@ -92,7 +106,7 @@ class _XcMenuPageState extends State<XcMenuPage> {
   StreamSubscription<ServiceNotificationEvent>? _subscription;
   final List<ServiceNotificationEvent> events = [];
 
-  // persistent notification id (use fixed id so we can update/cancel it)
+  // persistent notification id (fixed so kita bisa update/cancel)
   static const int _persistentNotificationId = 0;
 
   @override
@@ -102,16 +116,9 @@ class _XcMenuPageState extends State<XcMenuPage> {
   }
 
   Future<void> _initPlugins() async {
-    await _XcMenuStateHelper.init();
-    // Android 13+ requires runtime POST_NOTIFICATIONS permission: plugin exposes
-    // method requestPermission() on android implementation; call it if desired.
-    try {
-      await _XcMenuStateHelper
-          .flutterLocalNotificationsPlugin
-          .resolvePlatformSpecificImplementation<
-              AndroidFlutterLocalNotificationsPlugin>()
-          ?.requestPermission();
-    } catch (_) {}
+    await XcMenuStateHelper.init();
+    // request Android 13+ POST_NOTIFICATIONS permission if needed
+    await XcMenuStateHelper.requestAndroidPostNotificationsPermission();
   }
 
   Future<void> _requestNotificationListenerPermission() async {
@@ -127,19 +134,15 @@ class _XcMenuPageState extends State<XcMenuPage> {
   }
 
   void _startListeningAndShowPersistent() {
-    // 1) show persistent notification immediately (ongoing)
-    _XcMenuStateHelper.showPersistentNotification(
+    // Show persistent notification immediately
+    XcMenuStateHelper.showPersistentNotification(
       id: _persistentNotificationId,
       title: 'XC Listener aktif',
       body: 'Menangkap notifikasi — ketuk untuk kembali ke aplikasi',
     );
 
-    // 2) start subscription to notification events
-    if (_subscription != null) {
-      _subscription?.cancel();
-      _subscription = null;
-    }
-
+    // Start subscription
+    _subscription?.cancel();
     _subscription = NotificationListenerService.notificationsStream.listen(
       (ServiceNotificationEvent event) async {
         log('Notification event received: $event');
@@ -148,19 +151,18 @@ class _XcMenuPageState extends State<XcMenuPage> {
           events.insert(0, event);
         });
 
-        // show a separate notification per event (unique id)
         final int id = DateTime.now().millisecondsSinceEpoch.remainder(100000);
-        await _XcMenuStateHelper.showEventNotification(
+        await XcMenuStateHelper.showEventNotification(
           id: id,
           title: event.title ?? event.packageName ?? 'Notification',
           body: event.content ?? '',
         );
 
-        // Optionally update the persistent notification to show last app + count
+        // Update persistent notification (show last app + count)
         final int count = events.length;
         final String persistentBody =
             '${event.packageName ?? "app"} — last: ${event.title ?? event.content ?? ""} ($count)';
-        await _XcMenuStateHelper.showPersistentNotification(
+        await XcMenuStateHelper.showPersistentNotification(
           id: _persistentNotificationId,
           title: 'XC Listener aktif ($count)',
           body: persistentBody,
@@ -177,7 +179,7 @@ class _XcMenuPageState extends State<XcMenuPage> {
   void _stopListeningAndRemovePersistent() {
     _subscription?.cancel();
     _subscription = null;
-    _XcMenuStateHelper.cancelNotification(_persistentNotificationId);
+    XcMenuStateHelper.cancelNotification(_persistentNotificationId);
     ScaffoldMessenger.of(context)
         .showSnackBar(const SnackBar(content: Text('Listening stopped — persistent notification removed')));
   }
