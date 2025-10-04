@@ -88,4 +88,7 @@ dependencies {
 
     // ✅ OkHttp untuk HTTP POST ke server
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // ✅ Gson untuk parsing JSON (fix unresolved reference Gson/TypeToken)
+    implementation("com.google.code.gson:gson:2.10.1")
 }
