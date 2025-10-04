@@ -24,7 +24,7 @@ class XcMenuPage extends StatefulWidget {
   State<XcMenuPage> createState() => _XcMenuPageState();
 }
 
-class _XcMenuPageState extends State<XcMenuPage> {
+class _XcMenuPageState extends State<XcMenuPage> with WidgetsBindingObserver {
   static const _platform = MethodChannel('com.example.myxcreate/bg');
 
   // state
@@ -33,19 +33,79 @@ class _XcMenuPageState extends State<XcMenuPage> {
   final List<ServiceNotificationEvent> _notifications = [];
   final List<Map<String, dynamic>> _autoReplyLogs = [];
 
-  // Local notifications plugin instance
+  // Local notifications plugin instance (UI side)
   final FlutterLocalNotificationsPlugin _localNotif = FlutterLocalNotificationsPlugin();
+
+  // background service reference
+  final FlutterBackgroundService _bgService = FlutterBackgroundService();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initLocalNotifications();
-    _initBackgroundService(); // siapkan konfigurasi background service
+    _initBackgroundService(); // siapkan konfigurasi background service & onStart handler
     _loadSavedNotifications();
     _loadLogs();
+
+    // listen background service events (UI isolate) - menerima event saat background menemukan notifikasi
+    _bgService.on('new_notification').listen((event) {
+      if (event == null) return;
+      try {
+        final payload = event['payload'] ?? event['data'] ?? event;
+        String jsonStr = payload is String ? payload : json.encode(payload);
+        final m = json.decode(jsonStr) as Map<String, dynamic>;
+        final ev = _mapToServiceNotificationEvent(m);
+        setState(() {
+          _notifications.insert(0, ev);
+        });
+        _appendSavedNotification(m);
+        _showSnack("Notifikasi baru (background)");
+      } catch (e) {
+        log("bg->ui parse error: $e");
+      }
+    });
+
+    // listen stop/start commands from native (optional)
+    _bgService.on('service_status').listen((event) {
+      log("BG service status event: $event");
+    });
   }
 
-  // --------------- local notifications init ----------------
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _notificationSub?.cancel();
+    super.dispose();
+  }
+
+  // Jika app lifecycle berubah (mis. resumed), sinkronisasi saved notifications
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _loadSavedNotifications();
+    }
+  }
+
+  // ---------- helper: convert stored map -> ServiceNotificationEvent ----------
+  ServiceNotificationEvent _mapToServiceNotificationEvent(Map<String, dynamic> m) {
+    Uint8List? icon;
+    try {
+      if (m['icon_base64'] != null) {
+        icon = base64Decode(m['icon_base64']);
+      }
+    } catch (_) {}
+    return ServiceNotificationEvent(
+      packageName: m['packageName'],
+      title: m['title'],
+      content: m['content'],
+      appIcon: icon,
+      largeIcon: icon,
+      canReply: m['canReply'] == true,
+    );
+  }
+
+  // ---------------- local notifications init (UI) ----------------
   Future<void> _initLocalNotifications() async {
     const android = AndroidInitializationSettings('@mipmap/ic_launcher');
     const iOS = DarwinInitializationSettings();
@@ -56,40 +116,32 @@ class _XcMenuPageState extends State<XcMenuPage> {
     });
   }
 
-  Future<void> _showPersistentNotification({required String title, required String body}) async {
-    const channelId = 'xcreate_service_channel';
-    const channelName = 'XCreate Background Service';
-    const channelDesc = 'Notifikasi tetap XCreate saat service berjalan';
+  // show a simple local notification (not the service persistent one)
+  Future<void> _showLocalNotification({required String title, required String body}) async {
+    const channelId = 'xcreate_alerts';
+    const channelName = 'XCreate Alerts';
+    const channelDesc = 'Notifikasi singkat dari XCreate';
 
     final androidDetails = AndroidNotificationDetails(
       channelId,
       channelName,
       channelDescription: channelDesc,
-      importance: Importance.max,
+      importance: Importance.high,
       priority: Priority.high,
-      ongoing: true, // kunci notifikasi agar 'tetap'
-      autoCancel: false,
-      styleInformation: DefaultStyleInformation(true, true),
+      autoCancel: true,
     );
 
     final platformDetails = NotificationDetails(android: androidDetails);
-    await _localNotif.show(0, title, body, platformDetails, payload: 'xcreate_service');
+    await _localNotif.show(DateTime.now().millisecondsSinceEpoch % 100000, title, body, platformDetails);
   }
 
-  Future<void> _cancelPersistentNotification() async {
-    await _localNotif.cancel(0);
-  }
-
-  // --------------- background service init ----------------
+  // ---------------- background service init ----------------
   Future<void> _initBackgroundService() async {
-    final service = FlutterBackgroundService();
-
-    // konfigurasi Android / iOS
-    await service.configure(
+    // konfigurasi background service; onStart dijalankan di isolate background
+    await _bgService.configure(
       androidConfiguration: AndroidConfiguration(
-        // fungsi onStart akan dieksekusi di background isolate
         onStart: _onBackgroundServiceStart,
-        isForegroundMode: true,
+        isForegroundMode: true, // foreground -> menampilkan notifikasi "ongoing"
         autoStart: false,
         foregroundServiceNotificationId: 888,
         foregroundServiceNotificationTitle: "XCreate: Menangkap Notifikasi",
@@ -105,86 +157,141 @@ class _XcMenuPageState extends State<XcMenuPage> {
 
   // iOS background callback placeholder (tidak dipakai di Android)
   static bool _onIosBackground(ServiceInstance service) {
-    // iOS-specific background handling (jika perlu)
     return true;
   }
 
-  // fungsi onStart untuk background isolate (dipanggil oleh plugin)
+  // background isolate entrypoint
   static void _onBackgroundServiceStart(ServiceInstance service) {
-    // Perlu import plugin/logic yang sama -> gunakan event channel / isolate-safe code
-    // Karena ini static function dalam isolate, kita tak bisa langsung mengakses instance state
-    // Namun kita bisa menggunakan MethodChannel atau SharedPreferences untuk komunikasi
-    final logTag = 'XCreateBackground';
+    // IMPORTANT:
+    // onStart runs in a background isolate. Jangan mengakses UI atau context di sini.
+    // Kita akan mencoba subscribe ke NotificationListenerService.notificationsStream jika plugin mendukung.
+    final bgLog = (String msg) => log("[bg] $msg");
 
-    // Register callback untuk stop command dari UI
+    // set as foreground (Android)
+    if (service is AndroidServiceInstance) {
+      service.setAsForegroundService();
+      // set initial notification info (visible di status bar)
+      service.setForegroundNotificationInfo(
+        title: "XCreate aktif",
+        content: "Menangkap notifikasi di latar belakang",
+      );
+    }
+
+    // Listen for "stopService" command
     service.on('stopService').listen((event) {
+      bgLog("stopService received -> stopping");
       service.stopSelf();
     });
 
-    // Pastikan service berjalan sebagai foreground
-    if (service is AndroidServiceInstance) {
-      service.setAsForegroundService();
+    // Try to subscribe to notification stream from plugin
+    StreamSubscription? sub;
+    try {
+      // NOTE: Some plugins may not expose streams to a background isolate.
+      // Attempt; if it fails, fallback to native-side persistence (native should write to prefs).
+      sub = NotificationListenerService.notificationsStream.listen((evt) async {
+        try {
+          // Prepare map payload (avoid binary large icon to keep small)
+          final map = <String, dynamic>{
+            'packageName': evt.packageName,
+            'title': evt.title,
+            'content': evt.content,
+            'canReply': evt.canReply ?? false,
+            // convert small icon bytes to base64 safely if available (optional)
+            'icon_base64': (evt.appIcon != null) ? base64Encode(evt.appIcon!) : null,
+            'timestamp': DateTime.now().toIso8601String(),
+          };
+
+          // save into SharedPreferences so UI can read later
+          final prefs = await SharedPreferences.getInstance();
+          final list = prefs.getStringList('saved_notifications') ?? [];
+          list.insert(0, json.encode(map));
+          await prefs.setStringList('saved_notifications', list);
+
+          // Update the ongoing notification info (so user sees summary)
+          if (service is AndroidServiceInstance) {
+            final title = map['title'] ?? map['packageName'] ?? 'Notifikasi';
+            final content = map['content'] ?? '';
+            await service.setForegroundNotificationInfo(title: title, content: content.toString());
+          }
+
+          // Inform UI isolate (if alive) about new notification
+          service.invoke('new_notification', {'payload': json.encode(map)});
+          bgLog("notifikasi disimpan & dikirim ke UI");
+        } catch (e) {
+          bgLog("error handling event in bg: $e");
+        }
+      }, onError: (e) {
+        bgLog("bg stream error: $e");
+      }, cancelOnError: false);
+    } catch (e) {
+      bgLog("cannot subscribe to plugin stream in background isolate: $e");
     }
 
-    // Jika plugin notification_listener_service menggunakan EventChannel/Stream yang bekerja di isolate ini,
-    // kita bisa subscribe di sini. Jika tidak, native akan mengirim event saat app utama hidup.
-    //
-    // Kita buat polling default: per 5 detik update notification agar user tahu service hidup.
-    Timer.periodic(const Duration(seconds: 10), (timer) async {
-      if (service is AndroidServiceInstance) {
-        // update notification agar tetap informatif (opsional)
-        await service.setForegroundNotificationInfo(
-          title: "XCreate: Menangkap Notifikasi",
-          content: "Service aktif ${DateTime.now().toLocal()}",
-        );
+    // Periodic keep-alive ping to update notification content
+    Timer.periodic(const Duration(seconds: 15), (timer) async {
+      try {
+        if (service is AndroidServiceInstance) {
+          await service.setForegroundNotificationInfo(
+            title: "XCreate aktif",
+            content: "Menangkap notifikasi — ${DateTime.now().toLocal()}",
+          );
+        }
+      } catch (e) {
+        bgLog("error updating foreground notification: $e");
       }
-      // contoh log
-      service.invoke("update", {"now": DateTime.now().toIso8601String()});
     });
 
-    // Jika notification_listener_service menyediakan stream yang dapat di-subscribe dalam isolate background,
-    // Anda bisa subscribe di sini. Jika tidak, skema fallback: native side menyimpan notifikasi ke SharedPreferences/DB
-    // dan background isolate bisa baca perubahan tersebut.
-    //
-    // (Catatan: Behavior tergantung implementasi plugin native Anda)
+    // When service stops, cancel subscription
+    service.on('dispose').listen((_) async {
+      await sub?.cancel();
+    });
   }
 
-  // --------------- start / stop background service from UI ----------------
+  // ---------------- start / stop background service from UI ----------------
   Future<void> startBackgroundService() async {
-    final service = FlutterBackgroundService();
-
-    final isRunning = await service.isRunning();
+    final isRunning = await _bgService.isRunning();
     if (!isRunning) {
-      await service.startService();
-      // service started — foreground notification akan otomatis muncul karena isForegroundMode: true
+      await _bgService.startService();
+      // onStart di background akan men-set foreground notification
     } else {
-      // jika sudah running, pastikan mode foreground aktif
-      if (service is FlutterBackgroundService) {
-        // nothing specific to do; just ensure UI notifies user
-      }
+      // already running: update foreground info if possible
+      try {
+        if (await _bgService.isRunning()) {
+          // trigger an update (bridge) to ensure notif visible
+          await _bgService.invoke('update', {'now': DateTime.now().toIso8601String()});
+        }
+      } catch (_) {}
     }
 
-    // update persistent notification via flutter_local_notifications (agar tampil konsisten)
-    await _showPersistentNotification(
-      title: "XCreate aktif",
-      body: "Menangkap notifikasi di latar belakang",
-    );
+    // Berikan notifikasi UI juga (optional)
+    await _showLocalNotification(title: "XCreate aktif", body: "Service background berjalan");
   }
 
   Future<void> stopBackgroundService() async {
-    final service = FlutterBackgroundService();
-    await service.invoke("stopService");
-    await _cancelPersistentNotification();
+    try {
+      await _bgService.invoke("stopService");
+    } catch (e) {
+      log("stopBackgroundService invoke error: $e");
+    }
   }
 
   // ---------------- persistent storage ----------------
+  Future<void> _appendSavedNotification(Map<String, dynamic> m) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getStringList('saved_notifications') ?? [];
+    raw.insert(0, json.encode(m));
+    // keep max 200 entries
+    if (raw.length > 200) raw.removeRange(200, raw.length);
+    await prefs.setStringList('saved_notifications', raw);
+  }
+
   Future<void> _saveNotifications() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = _notifications.map((e) => json.encode({
           'packageName': e.packageName,
           'title': e.title,
           'content': e.content,
-          'icon': e.appIcon?.toList(),
+          'icon_base64': e.appIcon != null ? base64Encode(e.appIcon!) : null,
           'timestamp': DateTime.now().toIso8601String(),
         })).toList();
     await prefs.setStringList('saved_notifications', raw);
@@ -194,13 +301,12 @@ class _XcMenuPageState extends State<XcMenuPage> {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getStringList('saved_notifications') ?? [];
     final loaded = raw.map((s) {
-      final m = json.decode(s) as Map<String, dynamic>;
-      return ServiceNotificationEvent(
-        packageName: m['packageName'],
-        title: m['title'],
-        content: m['content'],
-        appIcon: m['icon'] != null ? Uint8List.fromList(List<int>.from(m['icon'])) : null,
-      );
+      try {
+        final m = json.decode(s) as Map<String, dynamic>;
+        return _mapToServiceNotificationEvent(m);
+      } catch (_) {
+        return ServiceNotificationEvent(packageName: 'unknown', title: '(invalid)', content: s);
+      }
     }).toList();
     setState(() {
       _notifications.clear();
@@ -246,6 +352,13 @@ class _XcMenuPageState extends State<XcMenuPage> {
     try {
       final res = await NotificationListenerService.requestPermission();
       _showSnack(res ? "Akses notifikasi: aktif" : "Akses notifikasi: belum aktif");
+
+      // Jika user memberi akses, langsung start stream & background service
+      if (res == true) {
+        await startBackgroundService();
+        // Also subscribe in UI (so app shows incoming notifications in UI)
+        await startStream(); // startStream akan subscribe ke notificationsStream
+      }
     } catch (e) {
       log("requestPermission error: $e");
       _showSnack("Gagal meminta akses notifikasi");
@@ -280,12 +393,24 @@ class _XcMenuPageState extends State<XcMenuPage> {
       setState(() {
         _notifications.insert(0, event);
       });
-      await _saveNotifications();
+      // persist local copy
+      final map = {
+        'packageName': event.packageName,
+        'title': event.title,
+        'content': event.content,
+        'canReply': event.canReply ?? false,
+        'icon_base64': event.appIcon != null ? base64Encode(event.appIcon!) : null,
+        'timestamp': DateTime.now().toIso8601String(),
+      };
+      await _appendSavedNotification(map);
 
-      // Update persistent notification summary when new notification datang
+      // Update persistent notification summary when new notification datang (UI side)
       try {
         final summary = "${event.packageName ?? ''}: ${event.title ?? ''}";
-        await _showPersistentNotification(title: "XCreate aktif", body: summary);
+        // Update background service foreground notification as well via invoke
+        await _bgService.invoke('update', {'now': DateTime.now().toIso8601String()});
+        // Optionally show a local short notification
+        await _showLocalNotification(title: "Notifikasi: ${event.title}", body: event.content ?? "");
       } catch (e) {
         log("update persistent notif error: $e");
       }
@@ -369,12 +494,6 @@ class _XcMenuPageState extends State<XcMenuPage> {
       _autoReplyLogs.insert(0, entry);
     });
     await _saveLogs();
-  }
-
-  @override
-  void dispose() {
-    _notificationSub?.cancel();
-    super.dispose();
   }
 
   @override
