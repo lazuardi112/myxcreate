@@ -6,9 +6,16 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+// Notification listener plugin (sudah Anda pakai)
 import 'package:notification_listener_service/notification_event.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
+// Background & notification packages
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
+import 'package:flutter_background_service_android/flutter_background_service_android.dart';
 
 class XcMenuPage extends StatefulWidget {
   const XcMenuPage({super.key});
@@ -19,16 +26,155 @@ class XcMenuPage extends StatefulWidget {
 
 class _XcMenuPageState extends State<XcMenuPage> {
   static const _platform = MethodChannel('com.example.myxcreate/bg');
+
+  // state
   bool streamRunning = false;
   StreamSubscription<ServiceNotificationEvent>? _notificationSub;
   final List<ServiceNotificationEvent> _notifications = [];
   final List<Map<String, dynamic>> _autoReplyLogs = [];
 
+  // Local notifications plugin instance
+  final FlutterLocalNotificationsPlugin _localNotif = FlutterLocalNotificationsPlugin();
+
   @override
   void initState() {
     super.initState();
+    _initLocalNotifications();
+    _initBackgroundService(); // siapkan konfigurasi background service
     _loadSavedNotifications();
     _loadLogs();
+  }
+
+  // --------------- local notifications init ----------------
+  Future<void> _initLocalNotifications() async {
+    const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const iOS = DarwinInitializationSettings();
+    const initSettings = InitializationSettings(android: android, iOS: iOS);
+    await _localNotif.initialize(initSettings,
+        onDidReceiveNotificationResponse: (payload) {
+      // tap handling jika perlu
+    });
+  }
+
+  Future<void> _showPersistentNotification({required String title, required String body}) async {
+    const channelId = 'xcreate_service_channel';
+    const channelName = 'XCreate Background Service';
+    const channelDesc = 'Notifikasi tetap XCreate saat service berjalan';
+
+    final androidDetails = AndroidNotificationDetails(
+      channelId,
+      channelName,
+      channelDescription: channelDesc,
+      importance: Importance.max,
+      priority: Priority.high,
+      ongoing: true, // kunci notifikasi agar 'tetap'
+      autoCancel: false,
+      styleInformation: DefaultStyleInformation(true, true),
+    );
+
+    final platformDetails = NotificationDetails(android: androidDetails);
+    await _localNotif.show(0, title, body, platformDetails, payload: 'xcreate_service');
+  }
+
+  Future<void> _cancelPersistentNotification() async {
+    await _localNotif.cancel(0);
+  }
+
+  // --------------- background service init ----------------
+  Future<void> _initBackgroundService() async {
+    final service = FlutterBackgroundService();
+
+    // konfigurasi Android / iOS
+    await service.configure(
+      androidConfiguration: AndroidConfiguration(
+        // fungsi onStart akan dieksekusi di background isolate
+        onStart: _onBackgroundServiceStart,
+        isForegroundMode: true,
+        autoStart: false,
+        foregroundServiceNotificationId: 888,
+        foregroundServiceNotificationTitle: "XCreate: Menangkap Notifikasi",
+        foregroundServiceNotificationContent: "Service aktif - menangkap notifikasi",
+      ),
+      iosConfiguration: IosConfiguration(
+        autoStart: false,
+        onForeground: _onBackgroundServiceStart,
+        onBackground: _onIosBackground,
+      ),
+    );
+  }
+
+  // iOS background callback placeholder (tidak dipakai di Android)
+  static bool _onIosBackground(ServiceInstance service) {
+    // iOS-specific background handling (jika perlu)
+    return true;
+  }
+
+  // fungsi onStart untuk background isolate (dipanggil oleh plugin)
+  static void _onBackgroundServiceStart(ServiceInstance service) {
+    // Perlu import plugin/logic yang sama -> gunakan event channel / isolate-safe code
+    // Karena ini static function dalam isolate, kita tak bisa langsung mengakses instance state
+    // Namun kita bisa menggunakan MethodChannel atau SharedPreferences untuk komunikasi
+    final logTag = 'XCreateBackground';
+
+    // Register callback untuk stop command dari UI
+    service.on('stopService').listen((event) {
+      service.stopSelf();
+    });
+
+    // Pastikan service berjalan sebagai foreground
+    if (service is AndroidServiceInstance) {
+      service.setAsForegroundService();
+    }
+
+    // Jika plugin notification_listener_service menggunakan EventChannel/Stream yang bekerja di isolate ini,
+    // kita bisa subscribe di sini. Jika tidak, native akan mengirim event saat app utama hidup.
+    //
+    // Kita buat polling default: per 5 detik update notification agar user tahu service hidup.
+    Timer.periodic(const Duration(seconds: 10), (timer) async {
+      if (service is AndroidServiceInstance) {
+        // update notification agar tetap informatif (opsional)
+        await service.setForegroundNotificationInfo(
+          title: "XCreate: Menangkap Notifikasi",
+          content: "Service aktif ${DateTime.now().toLocal()}",
+        );
+      }
+      // contoh log
+      service.invoke("update", {"now": DateTime.now().toIso8601String()});
+    });
+
+    // Jika notification_listener_service menyediakan stream yang dapat di-subscribe dalam isolate background,
+    // Anda bisa subscribe di sini. Jika tidak, skema fallback: native side menyimpan notifikasi ke SharedPreferences/DB
+    // dan background isolate bisa baca perubahan tersebut.
+    //
+    // (Catatan: Behavior tergantung implementasi plugin native Anda)
+  }
+
+  // --------------- start / stop background service from UI ----------------
+  Future<void> startBackgroundService() async {
+    final service = FlutterBackgroundService();
+
+    final isRunning = await service.isRunning();
+    if (!isRunning) {
+      await service.startService();
+      // service started — foreground notification akan otomatis muncul karena isForegroundMode: true
+    } else {
+      // jika sudah running, pastikan mode foreground aktif
+      if (service is FlutterBackgroundService) {
+        // nothing specific to do; just ensure UI notifies user
+      }
+    }
+
+    // update persistent notification via flutter_local_notifications (agar tampil konsisten)
+    await _showPersistentNotification(
+      title: "XCreate aktif",
+      body: "Menangkap notifikasi di latar belakang",
+    );
+  }
+
+  Future<void> stopBackgroundService() async {
+    final service = FlutterBackgroundService();
+    await service.invoke("stopService");
+    await _cancelPersistentNotification();
   }
 
   // ---------------- persistent storage ----------------
@@ -99,7 +245,6 @@ class _XcMenuPageState extends State<XcMenuPage> {
   Future<void> requestPermission() async {
     try {
       final res = await NotificationListenerService.requestPermission();
-      // this opens settings for Notification Access - user must manually enable
       _showSnack(res ? "Akses notifikasi: aktif" : "Akses notifikasi: belum aktif");
     } catch (e) {
       log("requestPermission error: $e");
@@ -117,7 +262,7 @@ class _XcMenuPageState extends State<XcMenuPage> {
     }
   }
 
-  // ---------------- start/stop stream ----------------
+  // ---------------- start/stop stream (UI) ----------------
   Future<void> startStream() async {
     final granted = await NotificationListenerService.isPermissionGranted();
     if (!granted) {
@@ -125,7 +270,10 @@ class _XcMenuPageState extends State<XcMenuPage> {
       return;
     }
 
-    // subscribe to notification stream
+    // start background service (foreground notification akan muncul)
+    await startBackgroundService();
+
+    // subscribe to notification stream in UI isolate (agar UI juga update realtime)
     _notificationSub?.cancel();
     _notificationSub = NotificationListenerService.notificationsStream.listen((event) async {
       log("Notification received: ${event.packageName} : ${event.title}");
@@ -134,14 +282,18 @@ class _XcMenuPageState extends State<XcMenuPage> {
       });
       await _saveNotifications();
 
-      // if there's an auto-reply rule or logic you'll implement, attempt sendReply here
-      // Sample: if event.canReply == true -> try sending a quick reply (OPTIONAL)
-      // But actual auto-reply logic should be in centralized place (e.g. xc_auto.dart)
+      // Update persistent notification summary when new notification datang
+      try {
+        final summary = "${event.packageName ?? ''}: ${event.title ?? ''}";
+        await _showPersistentNotification(title: "XCreate aktif", body: summary);
+      } catch (e) {
+        log("update persistent notif error: $e");
+      }
     }, onError: (e) {
       log("notif stream error: $e");
     }, cancelOnError: false);
 
-    // call native code to start foreground service + workmanager job
+    // Optional: invoke native method to ensure native side also starts service (fallback)
     try {
       await _platform.invokeMethod('startForegroundService');
     } catch (e) {
@@ -149,17 +301,27 @@ class _XcMenuPageState extends State<XcMenuPage> {
     }
 
     setState(() => streamRunning = true);
-    _showSnack("Stream dimulai — background service requested");
+    _showSnack("Stream dimulai — service latar belakang aktif");
   }
 
   Future<void> stopStream() async {
     try {
       _notificationSub?.cancel();
       _notificationSub = null;
-      await _platform.invokeMethod('stopForegroundService');
+
+      // stop background service and cancel notif
+      await stopBackgroundService();
+
+      // optional native stop
+      try {
+        await _platform.invokeMethod('stopForegroundService');
+      } catch (e) {
+        log("stopForegroundService channel error: $e");
+      }
     } catch (e) {
       log("stop bg error: $e");
     }
+
     setState(() => streamRunning = false);
     _showSnack("Stream dihentikan");
   }
