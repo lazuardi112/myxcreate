@@ -8,12 +8,12 @@ plugins {
 android {
     namespace = "com.example.myxcreate"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion // ✅ tidak diubah, tetap gunakan versi dari Flutter
+    ndkVersion = flutter.ndkVersion // ✅ tetap gunakan NDK dari Flutter
 
     defaultConfig {
         applicationId = "com.example.myxcreate"
 
-        // Fix minSdk agar cocok dengan google_mobile_ads & WorkManager
+        // Fix minSdk agar cocok dengan plugin modern
         minSdk = 23
         targetSdk = flutter.targetSdkVersion
 
@@ -24,7 +24,7 @@ android {
     }
 
     compileOptions {
-        // ✅ Tambahkan dukungan core library desugaring untuk Java 8
+        // ✅ Aktifkan desugaring untuk Java 8 compatibility
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
         isCoreLibraryDesugaringEnabled = true
@@ -68,8 +68,8 @@ flutter {
 }
 
 dependencies {
-    // ✅ Core Library Desugaring (wajib untuk Java 8 support di beberapa plugin)
-    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+    // ✅ Update versi desugar_jdk_libs agar sesuai requirement terbaru
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 
     // Multidex
     implementation("androidx.multidex:multidex:2.0.1")
@@ -79,10 +79,10 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.11.0")
 
-    // WorkManager (buat restart worker / background job)
+    // WorkManager
     implementation("androidx.work:work-runtime-ktx:2.8.1")
 
-    // Lifecycle & coroutine support
+    // Lifecycle & coroutine
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
