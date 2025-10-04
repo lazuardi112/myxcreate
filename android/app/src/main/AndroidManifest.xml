@@ -11,6 +11,7 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
     <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE" />
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <!-- ================== QUERIES ================== -->
     <queries>
@@ -30,6 +31,7 @@
         <package android:name="com.whatsapp" />
         <package android:name="com.whatsapp.w4b" />
         <package android:name="org.telegram.messenger" />
+        <package android:name="id.dana" />
     </queries>
 
     <!-- ================== APPLICATION ================== -->
@@ -39,7 +41,9 @@
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="true"
         android:usesCleartextTraffic="true"
-        tools:replace="android:allowBackup">
+        android:hardwareAccelerated="true"
+        android:requestLegacyExternalStorage="true"
+        tools:replace="android:allowBackup,android:icon,android:label">
 
         <!-- ===== Main Activity (Flutter) ===== -->
         <activity
@@ -48,7 +52,6 @@
             android:launchMode="singleTask"
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
-            android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
 
             <meta-data
@@ -70,13 +73,13 @@
             </intent-filter>
         </activity>
 
-        <!-- ===== Foreground service (flutter_foreground_task) ===== -->
+        <!-- ===== Foreground Service (flutter_foreground_task) ===== -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
             android:foregroundServiceType="dataSync|connectedDevice|mediaProjection"
             android:exported="false" />
 
-        <!-- ===== Accessibility service (flutter_accessibility_service) ===== -->
+        <!-- ===== Accessibility Service (flutter_accessibility_service) ===== -->
         <service
             android:name="slayer.accessibility.service.flutter_accessibility_service.FlutterAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
@@ -101,7 +104,34 @@
             </intent-filter>
         </service>
 
+        <!-- ===== Background Receiver untuk Boot Completed ===== -->
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ===== Notification Channel untuk flutter_local_notifications / awesome_notifications ===== -->
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"
+            android:exported="false" />
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ActionBroadcastReceiver"
+            android:exported="false" />
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.RebootBroadcastReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
         <!-- Flutter embedding metadata -->
-        <meta-data android:name="flutterEmbedding" android:value="2" />
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
     </application>
 </manifest>
