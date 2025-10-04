@@ -8,7 +8,7 @@ plugins {
 android {
     namespace = "com.example.myxcreate"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    ndkVersion = flutter.ndkVersion // ✅ tidak diubah, tetap gunakan versi dari Flutter
 
     defaultConfig {
         applicationId = "com.example.myxcreate"
@@ -24,8 +24,10 @@ android {
     }
 
     compileOptions {
+        // ✅ Tambahkan dukungan core library desugaring untuk Java 8
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -66,6 +68,9 @@ flutter {
 }
 
 dependencies {
+    // ✅ Core Library Desugaring (wajib untuk Java 8 support di beberapa plugin)
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+
     // Multidex
     implementation("androidx.multidex:multidex:2.0.1")
 
