@@ -320,10 +320,10 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
   Future<void> _loadInstalledApps() async {
     setState(() => _loadingApps = true);
     try {
-      // InstalledApps.getInstalledApps(showSystemApps, onlyAppsWithLaunchIntent)
-      final apps = await InstalledApps.getInstalledApps(true, true);
-      // AppInfo has: packageName, appName (or name), icon (Uint8List?) depending on package version
+      // sesuai dokumentasi plugin: (excludeSystemApps, withIcon, packageNamePrefix)
+      final apps = await InstalledApps.getInstalledApps(true, true, '');
       _installedApps = apps;
+      log('Loaded ${_installedApps.length} installed apps');
     } catch (e) {
       log('Failed to load installed apps: $e');
       _installedApps = [];
@@ -463,43 +463,46 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
       children: [
         Padding(
           padding: const EdgeInsets.all(12.0),
-          child: Row(children: [
-            ElevatedButton.icon(
-                onPressed: () async {
-                  final res = await NotificationListenerService.requestPermission();
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Open settings result: $res')));
-                },
-                icon: const Icon(Icons.security),
-                label: const Text('Request Access')),
-            const SizedBox(width: 8),
-            ElevatedButton.icon(
-                onPressed: () async {
-                  final bool g = await NotificationListenerService.isPermissionGranted();
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Access granted: $g')));
-                },
-                icon: const Icon(Icons.check),
-                label: const Text('Check Access')),
-            const SizedBox(width: 8),
-            ElevatedButton.icon(
-                onPressed: _listening ? null : _startListening,
-                icon: const Icon(Icons.play_arrow),
-                label: const Text('Start')),
-            const SizedBox(width: 8),
-            ElevatedButton.icon(
-                onPressed: _listening ? _stopListening : null,
-                icon: const Icon(Icons.stop),
-                label: const Text('Stop')),
-            const SizedBox(width: 8),
-            ElevatedButton.icon(
-                onPressed: _clearSavedNotifications,
-                icon: const Icon(Icons.delete_forever),
-                label: const Text('Clear Saved')),
-          ]),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(children: [
+              ElevatedButton.icon(
+                  onPressed: () async {
+                    final res = await NotificationListenerService.requestPermission();
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Open settings result: $res')));
+                  },
+                  icon: const Icon(Icons.security),
+                  label: const Text('Request Access')),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                  onPressed: () async {
+                    final bool g = await NotificationListenerService.isPermissionGranted();
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Access granted: $g')));
+                  },
+                  icon: const Icon(Icons.check),
+                  label: const Text('Check Access')),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                  onPressed: _listening ? null : _startListening,
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text('Start')),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                  onPressed: _listening ? _stopListening : null,
+                  icon: const Icon(Icons.stop),
+                  label: const Text('Stop')),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                  onPressed: _clearSavedNotifications,
+                  icon: const Icon(Icons.delete_forever),
+                  label: const Text('Clear Saved')),
+            ]),
+          ),
         ),
         const Divider(height: 0),
         Expanded(
           child: _savedNotifications.isEmpty
-              ? Center(child: Text('Belum ada notifikasi tersimpan. Tekan Start lalu kirim notifikasi dari aplikasi lain.'))
+              ? const Center(child: Text('Belum ada notifikasi tersimpan. Tekan Start lalu kirim notifikasi dari aplikasi lain.'))
               : ListView.separated(
                   itemCount: _savedNotifications.length,
                   separatorBuilder: (_, __) => const Divider(height: 0),
@@ -561,7 +564,8 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
             itemBuilder: (context, idx) {
               final a = _installedApps[idx];
               final pkg = a.packageName ?? 'unknown';
-              final name = (a.appName ?? a.name) ?? pkg;
+              // note: installed_apps AppInfo uses `name` per documentation
+              final name = (a.name != null && a.name.isNotEmpty) ? a.name : pkg;
               Widget leading;
               try {
                 if (a.icon != null) {
@@ -646,10 +650,9 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
             const SizedBox(width: 8),
             ElevatedButton.icon(
                 onPressed: () {
-                  // copy latest log as example (not required)
+                  // copy latest log as example (not implemented)
                   if (_postLogs.isNotEmpty) {
-                    final j = jsonEncode(_postLogs.first.toJson());
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Latest log copied to clipboard not implemented')));
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Latest log available')));
                   }
                 },
                 icon: const Icon(Icons.copy),
@@ -659,7 +662,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
         const Divider(height: 0),
         Expanded(
           child: _postLogs.isEmpty
-              ? Center(child: Text('Belum ada log POST.'))
+              ? const Center(child: Text('Belum ada log POST.'))
               : ListView.separated(
                   itemCount: _postLogs.length,
                   separatorBuilder: (_, __) => const Divider(height: 0),
