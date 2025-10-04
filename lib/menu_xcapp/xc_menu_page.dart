@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:developer';
 import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'package:installed_apps/installed_apps.dart';
 import 'package:installed_apps/app_info.dart';
@@ -19,6 +20,9 @@ const String kPrefsPostUrl = 'xc_post_url';
 const String kPrefsSavedNotifications = 'xc_saved_notifications';
 const String kPrefsPostLogs = 'xc_post_logs';
 const String kPrefsEnabled = 'xc_listener_enabled'; // used by native & flutter
+
+/// MethodChannel name (must match MainActivity.kt)
+const MethodChannel _serviceChannel = MethodChannel('com.example.myxcreate/xc_service');
 
 /// Model: saved notification
 class NotificationItem {
@@ -271,7 +275,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
 
   late TabController _tabController;
 
-  bool _listening = false;
+  bool _listening = false; // flutter-level listener while app running
   bool _loadingApps = true;
 
   @override
@@ -280,8 +284,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
     _tabController = TabController(length: 4, vsync: this);
     _initAll();
 
-    // Subscribe to notification action stream: ketika user mengetuk persistent notification,
-    // kita hentikan listener (stop) — bertindak sebagai "tombol stop" pada notifikasi.
+    // jika user mengetuk persistent notification (payload 'xc_persistent') kita toggle stop
     _notifActionSub = NotificationHelper.actionStream.stream.listen((payload) async {
       if (payload == 'xc_persistent') {
         if (mounted) {
@@ -316,11 +319,9 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
       // native enabled flag
       final bool? enabled = prefs.getBool(kPrefsEnabled);
       _nativeEnabledFlag = enabled ?? false;
-      // keep _listening consistent if user previously started via flutter
+      // reflect in UI
       if (_nativeEnabledFlag && !_listening) {
-        // don't auto-start listening stream in Flutter if native is enabled:
-        // Flutter-level stream only runs while Flutter app runs; we set UI flag accordingly
-        _listening = true;
+        _listening = true; // indicate that native will handle events if flutter closed
       }
 
       // saved notifs
@@ -373,6 +374,22 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
     _nativeEnabledFlag = enabled;
   }
 
+  Future<void> _startNativeForeground() async {
+    try {
+      await _serviceChannel.invokeMethod('startForeground');
+    } catch (e) {
+      log('startForeground platform error: $e');
+    }
+  }
+
+  Future<void> _stopNativeForeground() async {
+    try {
+      await _serviceChannel.invokeMethod('stopForeground');
+    } catch (e) {
+      log('stopForeground platform error: $e');
+    }
+  }
+
   Future<void> _loadInstalledApps() async {
     setState(() => _loadingApps = true);
     try {
@@ -395,9 +412,13 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
     // set enabled flag (so native will also process when Flutter closed)
     await _saveEnabledFlag(true);
 
-    // show persistent ongoing notification
+    // start native foreground service (native will create persistent notification that can't be swiped)
+    await _startNativeForeground();
+
+    // show persistent local notif too (useful when debugging; native notif is authoritative)
     await NotificationHelper.showPersistent(_persistentNotificationId, 'XC Listener aktif', 'Menangkap notifikasi');
 
+    // start Flutter-level stream (works while Flutter app alive)
     _sub?.cancel();
     _sub = NotificationListenerService.notificationsStream.listen(
       (ServiceNotificationEvent event) async {
@@ -449,7 +470,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
       setState(() {
         _listening = true;
       });
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Listening started (persistent notif shown)')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Listening started (native foreground started)')));
     } else {
       _listening = true;
     }
@@ -463,12 +484,17 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
     // unset enabled flag so native won't process when Flutter closed
     await _saveEnabledFlag(false);
 
+    // stop native foreground (native should also remove its persistent notif)
+    await _stopNativeForeground();
+
+    // cancel local persistent notif
     await NotificationHelper.cancel(_persistentNotificationId);
+
     if (mounted) {
       setState(() {
         _listening = false;
       });
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Listening stopped and persistent notif removed')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Listening stopped (native foreground stopped)')));
     } else {
       _listening = false;
     }
@@ -607,8 +633,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
         Padding(
           padding: const EdgeInsets.all(12.0),
           child: Row(children: [
-            ElevatedButton.icon(
-                onPressed: _loadInstalledApps, icon: const Icon(Icons.refresh), label: const Text('Refresh Apps')),
+            ElevatedButton.icon(onPressed: _loadInstalledApps, icon: const Icon(Icons.refresh), label: const Text('Refresh Apps')),
             const SizedBox(width: 8),
             ElevatedButton.icon(
                 onPressed: () {
@@ -803,7 +828,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () async {
-          // quick toggle from UI (set enabled flag and start/stop Flutter listener)
+          // quick toggle from UI (set enabled flag and start/stop Flutter listener + native)
           if (_listening) {
             await _stopListening();
           } else {
