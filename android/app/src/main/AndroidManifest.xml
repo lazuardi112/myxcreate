@@ -1,170 +1,44 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
     package="com.example.myxcreate">
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
-    <!-- ================== PERMISSIONS ================== -->
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.VIBRATE" />
-
-    <!-- Android 13+ runtime permission (must request at runtime from Flutter) -->
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-
-    <!-- Foreground service -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-
-    <!-- Optional fine-grained foreground types (not required but allowed) -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
-
-    <!-- Keep device awake if needed -->
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-
-    <!-- Restart service after boot -->
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-
-    <!-- ================== QUERIES ================== -->
-    <queries>
-        <!-- Launcher intent -->
-        <intent>
-            <action android:name="android.intent.action.MAIN" />
-            <category android:name="android.intent.category.LAUNCHER" />
-        </intent>
-
-        <!-- Text sharing -->
-        <intent>
-            <action android:name="android.intent.action.PROCESS_TEXT" />
-            <data android:mimeType="text/plain" />
-        </intent>
-
-        <!-- Examples of target apps for querying (optional) -->
-        <package android:name="com.whatsapp" />
-        <package android:name="com.whatsapp.w4b" />
-        <package android:name="org.telegram.messenger" />
-        <package android:name="id.dana" />
-    </queries>
-
-    <!-- ================== APPLICATION ================== -->
-    <application
-        android:name="${applicationName}"
-        android:label="@string/app_name"
-        android:icon="@mipmap/ic_launcher"
-        android:allowBackup="true"
-        android:usesCleartextTraffic="true"
-        android:hardwareAccelerated="true"
-        android:requestLegacyExternalStorage="true"
-        tools:replace="android:allowBackup,android:icon,android:label">
-
-        <!-- ===== Main Activity (Flutter) ===== -->
-        <activity
-            android:name=".MainActivity"
-            android:exported="true"
-            android:launchMode="singleTask"
-            android:theme="@style/LaunchTheme"
-            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
-            android:windowSoftInputMode="adjustResize">
-
-            <meta-data
-                android:name="io.flutter.embedding.android.NormalTheme"
-                android:resource="@style/NormalTheme" />
-
-            <!-- Launcher -->
+    <application android:label="@string/app_name" android:icon="@mipmap/ic_launcher">
+        <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-
-            <!-- Deep link -->
-            <intent-filter android:autoVerify="true">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" android:host="xcreate.my.id" />
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
 
-        <!-- ===== FOREGROUND STARTER SERVICE (native) ===== -->
-        <!-- Menampilkan notifikasi persistent (ongoing) yang tetap terlihat.
-             Implementasikan kelas: com.example.myxcreate.ForegroundStarterService -->
-        <service
-            android:name="com.example.myxcreate.ForegroundStarterService"
-            android:foregroundServiceType="dataSync|connectedDevice"
-            android:exported="false" />
-
-        <!-- ===== CUSTOM NATIVE NOTIFICATION LISTENER SERVICE ===== -->
-        <!-- Implementasikan kelas: com.example.myxcreate.MyNotificationListenerService -->
-        <service
-            android:name="com.example.myxcreate.MyNotificationListenerService"
-            android:label="XC Listener Service"
-            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.service.notification.NotificationListenerService" />
-            </intent-filter>
-        </service>
-
-        <!-- ===== Plugin-provided Notification Listener (opsional) ===== -->
-        <!-- Jika masih memakai plugin notification_listener_service, biarkan deklarasi ini. -->
-        <service
-            android:name="notification.listener.service.NotificationListener"
+        <service android:name="notification.listener.service.NotificationListener"
             android:label="notifications"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
             android:exported="true">
             <intent-filter>
-                <action android:name="android.service.notification.NotificationListenerService" />
+                <action android:name="android.service.notification.NotificationListenerService"/>
             </intent-filter>
         </service>
 
-        <!-- ===== CONTROL RECEIVER untuk tombol Start/Stop pada notif native ===== -->
-        <!-- Implementasikan kelas: com.example.myxcreate.ControlReceiver -->
-        <receiver
-            android:name="com.example.myxcreate.ControlReceiver"
-            android:exported="true" />
-
-        <!-- ===== BOOT RECEIVER untuk restart service on device boot ===== -->
-        <!-- Implementasikan kelas: com.example.myxcreate.BootReceiver -->
-        <receiver
-            android:name="com.example.myxcreate.BootReceiver"
-            android:enabled="true"
+        <service android:name=".MyNotificationListenerService"
+            android:label="XCApp Notifications"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
             android:exported="true">
             <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.service.notification.NotificationListenerService"/>
             </intent-filter>
-        </receiver>
-
-        <!-- ===== Accessibility Service (opsional) ===== -->
-        <service
-            android:name="slayer.accessibility.service.flutter_accessibility_service.FlutterAccessibilityService"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:exported="true"
-            android:label="@string/accessibility_service_label_plugin">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_service_config" />
         </service>
 
-        <!-- ===== flutter_local_notifications broadcast receivers ===== -->
-        <receiver
-            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"
-            android:exported="false" />
-        <receiver
-            android:name="com.dexterous.flutterlocalnotifications.ActionBroadcastReceiver"
-            android:exported="false" />
-        <receiver
-            android:name="com.dexterous.flutterlocalnotifications.RebootBroadcastReceiver"
-            android:exported="false">
+        <service android:name=".ForegroundStarterService" android:exported="false"/>
+
+        <receiver android:name=".ControlReceiver" android:exported="true"/>
+        <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
             </intent-filter>
         </receiver>
-
-        <!-- ===== Flutter embedding metadata ===== -->
-        <meta-data
-            android:name="flutterEmbedding"
-            android:value="2" />
     </application>
 </manifest>
