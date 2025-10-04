@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:developer';
 import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
+
 import 'package:installed_apps/installed_apps.dart';
 import 'package:installed_apps/app_info.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
@@ -17,6 +18,7 @@ const String kPrefsSelectedApps = 'xc_selected_apps';
 const String kPrefsPostUrl = 'xc_post_url';
 const String kPrefsSavedNotifications = 'xc_saved_notifications';
 const String kPrefsPostLogs = 'xc_post_logs';
+const String kPrefsEnabled = 'xc_listener_enabled'; // used by native & flutter
 
 /// Model: saved notification
 class NotificationItem {
@@ -166,6 +168,9 @@ class NotificationHelper {
   static const String channelName = 'XC Notifications';
   static const String channelDescription = 'Channel for XC foreground notifications';
 
+  /// actionStream digunakan untuk mengirim event ketika notifikasi di-tap
+  static final StreamController<String> actionStream = StreamController<String>.broadcast();
+
   static Future<void> init() async {
     const AndroidInitializationSettings androidInit =
         AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -174,7 +179,14 @@ class NotificationHelper {
       android: androidInit,
     );
 
-    await plugin.initialize(settings);
+    // callback ketika user mengetuk notifikasi
+    await plugin.initialize(settings,
+        onDidReceiveNotificationResponse: (NotificationResponse response) {
+      final payload = response.payload;
+      if (payload != null) {
+        actionStream.add(payload);
+      }
+    });
 
     final AndroidNotificationChannel channel = AndroidNotificationChannel(
       channelId,
@@ -190,6 +202,9 @@ class NotificationHelper {
     log('NotificationHelper initialized');
   }
 
+  /// Tampilkan notification persistent (ongoing).
+  /// payload yang dikirim diset ke 'xc_persistent' — ketika user mengetuk notifikasi,
+  /// NotificationHelper.actionStream akan menerima 'xc_persistent' dan app dapat merespon (mis. stop listener).
   static Future<void> showPersistent(int id, String title, String body) async {
     final android = AndroidNotificationDetails(
       channelId,
@@ -197,12 +212,13 @@ class NotificationHelper {
       channelDescription: channelDescription,
       importance: Importance.defaultImportance,
       priority: Priority.defaultPriority,
-      ongoing: true, // important: ongoing -> usually prevents swipe-clear
+      ongoing: true, // ongoing mengurangi kemungkinan swipe-clear
       autoCancel: false,
       onlyAlertOnce: true,
     );
     final details = NotificationDetails(android: android);
-    await plugin.show(id, title, body, details);
+    await plugin.show(id, title, body, details, payload: 'xc_persistent');
+    log('Persistent notification shown: $title | $body');
   }
 
   static Future<void> showOneShot(int id, String? title, String? body) async {
@@ -220,6 +236,13 @@ class NotificationHelper {
 
   static Future<void> cancel(int id) async {
     await plugin.cancel(id);
+    log('Notification cancelled: $id');
+  }
+
+  static void dispose() {
+    try {
+      actionStream.close();
+    } catch (_) {}
   }
 }
 
@@ -233,6 +256,7 @@ class XcMenuPage extends StatefulWidget {
 class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateMixin {
   // subscriptions & storage
   StreamSubscription<ServiceNotificationEvent>? _sub;
+  StreamSubscription<String>? _notifActionSub;
   final List<NotificationItem> _savedNotifications = [];
   final List<PostLog> _postLogs = [];
 
@@ -241,6 +265,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
   Set<String> _selectedPackageNames = {};
 
   String _postUrl = '';
+  bool _nativeEnabledFlag = false; // reflect native flag in prefs (xc_listener_enabled)
 
   static const int _persistentNotificationId = 9999; // fixed id for ongoing notification
 
@@ -254,6 +279,21 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
     _initAll();
+
+    // Subscribe to notification action stream: ketika user mengetuk persistent notification,
+    // kita hentikan listener (stop) — bertindak sebagai "tombol stop" pada notifikasi.
+    _notifActionSub = NotificationHelper.actionStream.stream.listen((payload) async {
+      if (payload == 'xc_persistent') {
+        if (mounted) {
+          if (_listening) {
+            await _stopListening();
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Listening stopped (from notification)')));
+          } else {
+            _tabController.index = 0;
+          }
+        }
+      }
+    });
   }
 
   Future<void> _initAll() async {
@@ -273,6 +313,16 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
       final String? url = prefs.getString(kPrefsPostUrl);
       if (url != null) _postUrl = url;
 
+      // native enabled flag
+      final bool? enabled = prefs.getBool(kPrefsEnabled);
+      _nativeEnabledFlag = enabled ?? false;
+      // keep _listening consistent if user previously started via flutter
+      if (_nativeEnabledFlag && !_listening) {
+        // don't auto-start listening stream in Flutter if native is enabled:
+        // Flutter-level stream only runs while Flutter app runs; we set UI flag accordingly
+        _listening = true;
+      }
+
       // saved notifs
       final String? rawNotifs = prefs.getString(kPrefsSavedNotifications);
       if (rawNotifs != null && rawNotifs.isNotEmpty) {
@@ -288,8 +338,8 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
         _postLogs.clear();
         _postLogs.addAll(decoded.map((e) => PostLog.fromJson(Map<String, dynamic>.from(e))));
       }
-      setState(() {});
-      log('Prefs loaded: selected=${_selectedPackageNames.length}, saved=${_savedNotifications.length}, logs=${_postLogs.length}');
+      if (mounted) setState(() {});
+      log('Prefs loaded: selected=${_selectedPackageNames.length}, saved=${_savedNotifications.length}, logs=${_postLogs.length}, enabled=$_nativeEnabledFlag');
     } catch (e) {
       log('Failed load prefs: $e');
     }
@@ -317,6 +367,12 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
     await prefs.setString(kPrefsPostLogs, encoded);
   }
 
+  Future<void> _saveEnabledFlag(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(kPrefsEnabled, enabled);
+    _nativeEnabledFlag = enabled;
+  }
+
   Future<void> _loadInstalledApps() async {
     setState(() => _loadingApps = true);
     try {
@@ -328,15 +384,19 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
       log('Failed to load installed apps: $e');
       _installedApps = [];
     } finally {
-      setState(() => _loadingApps = false);
+      if (mounted) setState(() => _loadingApps = false);
     }
   }
 
   // start listening
-  void _startListening() {
+  Future<void> _startListening() async {
     if (_listening) return;
+
+    // set enabled flag (so native will also process when Flutter closed)
+    await _saveEnabledFlag(true);
+
     // show persistent ongoing notification
-    NotificationHelper.showPersistent(_persistentNotificationId, 'XC Listener aktif', 'Menangkap notifikasi');
+    await NotificationHelper.showPersistent(_persistentNotificationId, 'XC Listener aktif', 'Menangkap notifikasi');
 
     _sub?.cancel();
     _sub = NotificationListenerService.notificationsStream.listen(
@@ -353,9 +413,13 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
 
           // build item & save
           final item = NotificationItem.fromEvent(event);
-          setState(() {
+          if (mounted) {
+            setState(() {
+              _savedNotifications.insert(0, item);
+            });
+          } else {
             _savedNotifications.insert(0, item);
-          });
+          }
           await _saveNotificationsToPrefs();
 
           // show local one-shot notif for event
@@ -376,27 +440,38 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
       },
       onError: (e) {
         log('Stream error: $e');
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Stream error: $e')));
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Stream error: $e')));
       },
       cancelOnError: true,
     );
 
-    setState(() {
+    if (mounted) {
+      setState(() {
+        _listening = true;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Listening started (persistent notif shown)')));
+    } else {
       _listening = true;
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Listening started (persistent notif shown)')));
+    }
   }
 
   // stop listening
-  void _stopListening() {
+  Future<void> _stopListening() async {
     _sub?.cancel();
     _sub = null;
-    NotificationHelper.cancel(_persistentNotificationId);
-    setState(() {
+
+    // unset enabled flag so native won't process when Flutter closed
+    await _saveEnabledFlag(false);
+
+    await NotificationHelper.cancel(_persistentNotificationId);
+    if (mounted) {
+      setState(() {
+        _listening = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Listening stopped and persistent notif removed')));
+    } else {
       _listening = false;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Listening stopped and persistent notif removed')));
+    }
   }
 
   Future<void> _sendPostForItem(NotificationItem item) async {
@@ -422,13 +497,13 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
       );
       _postLogs.insert(0, logEntry);
       await _saveLogsToPrefs();
-      setState(() {});
+      if (mounted) setState(() {});
       log('POST success ${resp.statusCode}');
     } catch (e) {
       final logEntry = PostLog.failure(url: url, app: item.packageName ?? '', title: item.title, text: item.content, error: e.toString());
       _postLogs.insert(0, logEntry);
       await _saveLogsToPrefs();
-      setState(() {});
+      if (mounted) setState(() {});
       log('POST failed: $e');
     }
   }
@@ -448,13 +523,13 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
   Future<void> _clearSavedNotifications() async {
     _savedNotifications.clear();
     await _saveNotificationsToPrefs();
-    setState(() {});
+    if (mounted) setState(() {});
   }
 
   Future<void> _clearLogs() async {
     _postLogs.clear();
     await _saveLogsToPrefs();
-    setState(() {});
+    if (mounted) setState(() {});
   }
 
   // UI building
@@ -469,7 +544,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
               ElevatedButton.icon(
                   onPressed: () async {
                     final res = await NotificationListenerService.requestPermission();
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Open settings result: $res')));
+                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Open settings result: $res')));
                   },
                   icon: const Icon(Icons.security),
                   label: const Text('Request Access')),
@@ -477,7 +552,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
               ElevatedButton.icon(
                   onPressed: () async {
                     final bool g = await NotificationListenerService.isPermissionGranted();
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Access granted: $g')));
+                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Access granted: $g')));
                   },
                   icon: const Icon(Icons.check),
                   label: const Text('Check Access')),
@@ -564,7 +639,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
             itemBuilder: (context, idx) {
               final a = _installedApps[idx];
               final pkg = a.packageName ?? 'unknown';
-              // note: installed_apps AppInfo uses `name` per documentation
+              // installed_apps AppInfo uses `name` per documentation
               final name = (a.name != null && a.name.isNotEmpty) ? a.name : pkg;
               Widget leading;
               try {
@@ -613,7 +688,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
                   _postUrl = controller.text.trim();
                 });
                 _savePostUrl();
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('URL saved')));
+                if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('URL saved')));
               },
               icon: const Icon(Icons.save),
               label: const Text('Save URL')),
@@ -650,7 +725,6 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
             const SizedBox(width: 8),
             ElevatedButton.icon(
                 onPressed: () {
-                  // copy latest log as example (not implemented)
                   if (_postLogs.isNotEmpty) {
                     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Latest log available')));
                   }
@@ -696,7 +770,9 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
   @override
   void dispose() {
     _sub?.cancel();
+    _notifActionSub?.cancel();
     _tabController.dispose();
+    NotificationHelper.dispose();
     super.dispose();
   }
 
@@ -724,6 +800,18 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
           _buildUrlTab(),
           _buildLogsTab(),
         ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () async {
+          // quick toggle from UI (set enabled flag and start/stop Flutter listener)
+          if (_listening) {
+            await _stopListening();
+          } else {
+            await _startListening();
+          }
+        },
+        label: Text(_listening ? 'Stop' : 'Start'),
+        icon: Icon(_listening ? Icons.stop : Icons.play_arrow),
       ),
     );
   }
