@@ -11,7 +11,7 @@ import 'package:notification_listener_service/notification_listener_service.dart
 import 'package:notification_listener_service/notification_event.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:http/http.dart' as http';
+import 'package:http/http.dart' as http;
  
 /// Keys SharedPreferences
 const String kPrefsSelectedApps = 'xc_selected_apps';
