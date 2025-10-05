@@ -5,6 +5,7 @@ import 'dart:developer';
 import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
 import 'package:installed_apps/installed_apps.dart';
 import 'package:installed_apps/app_info.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
@@ -15,15 +16,16 @@ import 'package:http/http.dart' as http;
 
 /// Keys SharedPreferences
 const String kPrefsSelectedApps = 'xc_selected_apps';
+const String kPrefsSelectedAppsJson = 'xc_selected_apps_json'; // JSON fallback for native
 const String kPrefsPostUrl = 'xc_post_url';
 const String kPrefsSavedNotifications = 'xc_saved_notifications';
 const String kPrefsPostLogs = 'xc_post_logs';
 const String kPrefsEnabled = 'xc_listener_enabled'; // used by native & flutter
 
-/// MethodChannel name (harus sesuai MainActivity.kt)
+/// MethodChannel name (must match Kotlin MainActivity)
 const MethodChannel _serviceChannel = MethodChannel('com.example.myxcreate/xc_service');
 
-/// Model sederhana untuk notifikasi yang disimpan
+/// (Models: NotificationItem & PostLog same as before — omitted here for brevity if you already have them)
 class NotificationItem {
   final int? id;
   final String? packageName;
@@ -78,7 +80,6 @@ class NotificationItem {
       };
 }
 
-/// Model: post log
 class PostLog {
   final String timestamp;
   final String url;
@@ -164,24 +165,22 @@ class PostLog {
       };
 }
 
-/// Helper local notifications (Flutter side)
+/// NotificationHelper (sama dengan implementasi sebelumnya)
 class NotificationHelper {
   static final FlutterLocalNotificationsPlugin plugin = FlutterLocalNotificationsPlugin();
   static const String channelId = 'xc_channel_id';
   static const String channelName = 'XC Notifications';
   static const String channelDescription = 'Channel for XC foreground notifications';
 
-  /// actionStream untuk menangkap payload dari notifikasi (mis. 'xc_persistent')
   static final StreamController<String> actionStream = StreamController<String>.broadcast();
 
   static Future<void> init() async {
     const AndroidInitializationSettings androidInit =
         AndroidInitializationSettings('@mipmap/ic_launcher');
-
     final InitializationSettings settings = InitializationSettings(android: androidInit);
-
-    await plugin.initialize(settings, onDidReceiveNotificationResponse: (NotificationResponse r) {
-      final payload = r.payload;
+    await plugin.initialize(settings,
+        onDidReceiveNotificationResponse: (NotificationResponse response) {
+      final payload = response.payload;
       if (payload != null) actionStream.add(payload);
     });
 
@@ -195,7 +194,6 @@ class NotificationHelper {
     await plugin
         .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(channel);
-
     log('NotificationHelper initialized');
   }
 
@@ -227,9 +225,7 @@ class NotificationHelper {
     await plugin.show(id, title, body, details);
   }
 
-  static Future<void> cancel(int id) async {
-    await plugin.cancel(id);
-  }
+  static Future<void> cancel(int id) async => plugin.cancel(id);
 
   static void dispose() {
     try {
@@ -240,30 +236,25 @@ class NotificationHelper {
 
 class XcMenuPage extends StatefulWidget {
   const XcMenuPage({super.key});
-
   @override
   State<XcMenuPage> createState() => _XcMenuPageState();
 }
 
 class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateMixin {
-  // subscriptions & storage
   StreamSubscription<ServiceNotificationEvent>? _sub;
   StreamSubscription<String>? _notifActionSub;
   final List<NotificationItem> _savedNotifications = [];
   final List<PostLog> _postLogs = [];
 
-  // installed apps list (AppInfo from installed_apps)
   List<AppInfo> _installedApps = [];
   Set<String> _selectedPackageNames = {};
 
   String _postUrl = '';
-  bool _nativeEnabledFlag = false; // reflect native flag in prefs (xc_listener_enabled)
+  bool _nativeEnabledFlag = false;
 
-  static const int _persistentNotificationId = 9999; // fixed id for ongoing notification
-
+  static const int _persistentNotificationId = 9999;
   late TabController _tabController;
-
-  bool _listening = false; // flutter-level listener while UI alive
+  bool _listening = false;
   bool _loadingApps = true;
 
   @override
@@ -272,7 +263,6 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
     _tabController = TabController(length: 4, vsync: this);
     _initAll();
 
-    // jika user mengetuk persistent notification di native / flutter payload
     _notifActionSub = NotificationHelper.actionStream.stream.listen((payload) async {
       if (payload == 'xc_persistent') {
         if (mounted) {
@@ -296,37 +286,24 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
   Future<void> _loadPrefs() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      final List<String>? sel = prefs.getStringList(kPrefsSelectedApps);
+      if (sel != null) _selectedPackageNames = sel.toSet();
 
-      // selected apps - prefer StringList, fallback JSON raw
-      final List<String>? selList = prefs.getStringList(kPrefsSelectedApps);
-      if (selList != null && selList.isNotEmpty) {
-        _selectedPackageNames = selList.toSet();
-      } else {
-        final String? raw = prefs.getString(kPrefsSelectedApps);
-        if (raw != null && raw.isNotEmpty) {
-          try {
-            final decoded = jsonDecode(raw) as List<dynamic>;
-            _selectedPackageNames = decoded.map((e) => e.toString()).toSet();
-          } catch (_) {
-            _selectedPackageNames = {};
-          }
-        } else {
-          _selectedPackageNames = {};
-        }
+      final String? jsonSel = prefs.getString(kPrefsSelectedAppsJson);
+      if (( _selectedPackageNames.isEmpty) && jsonSel != null && jsonSel.isNotEmpty) {
+        try {
+          final List<dynamic> list = jsonDecode(jsonSel);
+          _selectedPackageNames = list.map((e) => e.toString()).toSet();
+        } catch (_) {}
       }
 
-      // post url
       final String? url = prefs.getString(kPrefsPostUrl);
       if (url != null) _postUrl = url;
 
-      // native enabled flag
       final bool? enabled = prefs.getBool(kPrefsEnabled);
       _nativeEnabledFlag = enabled ?? false;
-      if (_nativeEnabledFlag && !_listening) {
-        _listening = true; // indicate UI that native service is expected to handle events while app closed
-      }
+      if (_nativeEnabledFlag && !_listening) _listening = true;
 
-      // saved notifs
       final String? rawNotifs = prefs.getString(kPrefsSavedNotifications);
       if (rawNotifs != null && rawNotifs.isNotEmpty) {
         final decoded = jsonDecode(rawNotifs) as List<dynamic>;
@@ -334,32 +311,32 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
         _savedNotifications.addAll(decoded.map((e) => NotificationItem.fromJson(Map<String, dynamic>.from(e))));
       }
 
-      // logs
       final String? rawLogs = prefs.getString(kPrefsPostLogs);
       if (rawLogs != null && rawLogs.isNotEmpty) {
         final decoded = jsonDecode(rawLogs) as List<dynamic>;
         _postLogs.clear();
         _postLogs.addAll(decoded.map((e) => PostLog.fromJson(Map<String, dynamic>.from(e))));
       }
-
       if (mounted) setState(() {});
-      log('Prefs loaded: selected=${_selectedPackageNames.length}, saved=${_savedNotifications.length}, logs=${_postLogs.length}, enabled=$_nativeEnabledFlag');
+      log('Prefs loaded: selected=${_selectedPackageNames.length}, enabled=$_nativeEnabledFlag');
     } catch (e) {
       log('Failed load prefs: $e');
     }
   }
 
-  /// Save selected apps in both Flutter-friendly List and JSON raw (native-friendly).
   Future<void> _saveSelectedApps() async {
     final prefs = await SharedPreferences.getInstance();
     final list = _selectedPackageNames.toList();
     await prefs.setStringList(kPrefsSelectedApps, list);
+    // Also write JSON fallback so native can parse easily
+    await prefs.setString(kPrefsSelectedAppsJson, jsonEncode(list));
+    // If native service is running, tell it to refresh (best-effort)
     try {
-      await prefs.setString(kPrefsSelectedApps, jsonEncode(list));
+      await _serviceChannel.invokeMethod('refreshSelectedApps');
     } catch (e) {
-      log('Failed saving JSON selected list: $e');
+      // ignore if native doesn't implement
+      log('refreshSelectedApps platform error: $e');
     }
-    log('Selected apps saved: ${list.length}');
   }
 
   Future<void> _savePostUrl() async {
@@ -385,6 +362,24 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
     _nativeEnabledFlag = enabled;
   }
 
+  Future<void> _startNativeForeground() async {
+    // ensure selected apps saved for native to read
+    await _saveSelectedApps();
+    try {
+      await _serviceChannel.invokeMethod('startForeground');
+    } catch (e) {
+      log('startForeground platform error: $e');
+    }
+  }
+
+  Future<void> _stopNativeForeground() async {
+    try {
+      await _serviceChannel.invokeMethod('stopForeground');
+    } catch (e) {
+      log('stopForeground platform error: $e');
+    }
+  }
+
   Future<void> _loadInstalledApps() async {
     setState(() => _loadingApps = true);
     try {
@@ -399,75 +394,18 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
     }
   }
 
-  // ---------- Native foreground control ----------
-  Future<void> _startNativeForeground() async {
-    try {
-      await _serviceChannel.invokeMethod('startForeground');
-      log('Requested startForeground on native side');
-    } catch (e) {
-      log('startForeground platform error: $e');
-    }
-  }
-
-  Future<void> _stopNativeForeground() async {
-    try {
-      await _serviceChannel.invokeMethod('stopForeground');
-      log('Requested stopForeground on native side');
-    } catch (e) {
-      log('stopForeground platform error: $e');
-    }
-  }
-
-  // ---------- Start / Stop listener flows ----------
   Future<void> _startListening() async {
     if (_listening) return;
-
-    // Ensure only on Android (notification listener plugin is Android-only)
-    if (!Platform.isAndroid) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notification listening hanya tersedia di Android')));
-      return;
-    }
-
-    // check notification access permission first
-    bool granted = false;
-    try {
-      granted = await NotificationListenerService.isPermissionGranted();
-    } catch (e) {
-      log('isPermissionGranted error: $e');
-    }
-
-    if (!granted) {
-      try {
-        final res = await NotificationListenerService.requestPermission();
-        // requestPermission opens settings and returns true once user enabled
-        if (!res) {
-          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Permission not granted. Open settings and enable Notification Access.')));
-          return;
-        }
-      } catch (e) {
-        log('requestPermission error: $e');
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error requesting permission: $e')));
-        return;
-      }
-    }
-
-    // set enabled flag (so native will also process when Flutter closed)
     await _saveEnabledFlag(true);
-
-    // start native foreground service (native will show persistent notif)
     await _startNativeForeground();
-
-    // show flutter persistent notif too (optional)
     await NotificationHelper.showPersistent(_persistentNotificationId, 'XC Listener aktif', 'Menangkap notifikasi');
 
-    // start Flutter-level stream for UI while app alive
     _sub?.cancel();
     _sub = NotificationListenerService.notificationsStream.listen(
       (ServiceNotificationEvent event) async {
         try {
           final String pkg = event.packageName ?? 'unknown';
-
-          // filter by selected apps (if selection not empty)
+          // check selected apps: if none selected => capture all
           if (_selectedPackageNames.isNotEmpty && !_selectedPackageNames.contains(pkg)) {
             log('Ignored package $pkg (not selected)');
             return;
@@ -483,15 +421,12 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
           }
           await _saveNotificationsToPrefs();
 
-          // show one-shot notif
           final int id = DateTime.now().millisecondsSinceEpoch.remainder(100000);
           await NotificationHelper.showOneShot(id, item.title, item.content);
 
-          // update persistent notif text/count
           await NotificationHelper.showPersistent(
               _persistentNotificationId, 'XC Listener aktif (${_savedNotifications.length})', '${item.packageName ?? "app"} — ${item.title ?? item.content ?? ""}');
 
-          // send POST if configured
           if (_postUrl.trim().isNotEmpty) {
             await _sendPostForItem(item);
           }
@@ -519,14 +454,8 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
   Future<void> _stopListening() async {
     _sub?.cancel();
     _sub = null;
-
-    // unset enabled flag
     await _saveEnabledFlag(false);
-
-    // stop native foreground
     await _stopNativeForeground();
-
-    // cancel flutter persistent notif
     await NotificationHelper.cancel(_persistentNotificationId);
 
     if (mounted) {
@@ -572,14 +501,10 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
     }
   }
 
-  // UI actions: toggling app selection
   void _toggleSelectPackage(String packageName) {
     setState(() {
-      if (_selectedPackageNames.contains(packageName)) {
-        _selectedPackageNames.remove(packageName);
-      } else {
-        _selectedPackageNames.add(packageName);
-      }
+      if (_selectedPackageNames.contains(packageName)) _selectedPackageNames.remove(packageName);
+      else _selectedPackageNames.add(packageName);
     });
     _saveSelectedApps();
   }
@@ -596,7 +521,6 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
     if (mounted) setState(() {});
   }
 
-  // UI builders
   Widget _buildListenerTab() {
     return Column(
       children: [
@@ -612,14 +536,6 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
                   },
                   icon: const Icon(Icons.security),
                   label: const Text('Request Access')),
-              const SizedBox(width: 8),
-              ElevatedButton.icon(
-                  onPressed: () async {
-                    final bool g = await NotificationListenerService.isPermissionGranted();
-                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Access granted: $g')));
-                  },
-                  icon: const Icon(Icons.check),
-                  label: const Text('Check Access')),
               const SizedBox(width: 8),
               ElevatedButton.icon(
                   onPressed: _listening ? null : _startListening,
@@ -662,10 +578,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
   }
 
   Widget _buildSettingsTab() {
-    if (_loadingApps) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
+    if (_loadingApps) return const Center(child: CircularProgressIndicator());
     return Column(
       children: [
         Padding(
@@ -716,7 +629,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
 
               return CheckboxListTile(
                 value: _selectedPackageNames.contains(pkg),
-                onChanged: (v) => _toggleSelectPackage(pkg),
+                onChanged: (_) => _toggleSelectPackage(pkg),
                 title: Text(name),
                 subtitle: Text(pkg),
                 secondary: leading,
