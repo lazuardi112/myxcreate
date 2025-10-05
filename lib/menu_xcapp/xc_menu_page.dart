@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'dart:developer';
 import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // MethodChannel, SystemNavigator
+import 'package:flutter/services.dart';
 import 'package:installed_apps/installed_apps.dart';
 import 'package:installed_apps/app_info.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
@@ -12,7 +12,7 @@ import 'package:notification_listener_service/notification_event.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
- 
+
 /// Keys SharedPreferences
 const String kPrefsSelectedApps = 'xc_selected_apps';
 const String kPrefsPostUrl = 'xc_post_url';
@@ -403,6 +403,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
   Future<void> _startNativeForeground() async {
     try {
       await _serviceChannel.invokeMethod('startForeground');
+      log('Requested startForeground on native side');
     } catch (e) {
       log('startForeground platform error: $e');
     }
@@ -411,6 +412,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
   Future<void> _stopNativeForeground() async {
     try {
       await _serviceChannel.invokeMethod('stopForeground');
+      log('Requested stopForeground on native side');
     } catch (e) {
       log('stopForeground platform error: $e');
     }
@@ -420,13 +422,42 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
   Future<void> _startListening() async {
     if (_listening) return;
 
-    // set enabled flag (so native also processes if Flutter closed)
+    // Ensure only on Android (notification listener plugin is Android-only)
+    if (!Platform.isAndroid) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notification listening hanya tersedia di Android')));
+      return;
+    }
+
+    // check notification access permission first
+    bool granted = false;
+    try {
+      granted = await NotificationListenerService.isPermissionGranted();
+    } catch (e) {
+      log('isPermissionGranted error: $e');
+    }
+
+    if (!granted) {
+      try {
+        final res = await NotificationListenerService.requestPermission();
+        // requestPermission opens settings and returns true once user enabled
+        if (!res) {
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Permission not granted. Open settings and enable Notification Access.')));
+          return;
+        }
+      } catch (e) {
+        log('requestPermission error: $e');
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error requesting permission: $e')));
+        return;
+      }
+    }
+
+    // set enabled flag (so native will also process when Flutter closed)
     await _saveEnabledFlag(true);
 
     // start native foreground service (native will show persistent notif)
     await _startNativeForeground();
 
-    // optional: show flutter persistent notif too
+    // show flutter persistent notif too (optional)
     await NotificationHelper.showPersistent(_persistentNotificationId, 'XC Listener aktif', 'Menangkap notifikasi');
 
     // start Flutter-level stream for UI while app alive
@@ -505,32 +536,6 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Listening stopped (native foreground stopped)')));
     } else {
       _listening = false;
-    }
-  }
-
-  /// Start listener then close the app UI (so service runs while app closed)
-  Future<void> _startAndCloseApp() async {
-    // check notification access permission first
-    final granted = await NotificationListenerService.isPermissionGranted();
-    if (!granted) {
-      final res = await NotificationListenerService.requestPermission();
-      if (!res) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please grant Notification Access first')));
-        return;
-      }
-    }
-
-    // start listening (native + flutter stream)
-    await _startListening();
-
-    // slight delay to let native start before closing UI
-    await Future.delayed(const Duration(milliseconds: 250));
-
-    // close app UI (service remains)
-    try {
-      SystemNavigator.pop();
-    } catch (e) {
-      log('SystemNavigator.pop error: $e');
     }
   }
 
@@ -617,9 +622,9 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
                   label: const Text('Check Access')),
               const SizedBox(width: 8),
               ElevatedButton.icon(
-                  onPressed: _listening ? null : _startAndCloseApp,
+                  onPressed: _listening ? null : _startListening,
                   icon: const Icon(Icons.play_arrow),
-                  label: const Text('Start & Close App')),
+                  label: const Text('Start')),
               const SizedBox(width: 8),
               ElevatedButton.icon(
                   onPressed: _listening ? _stopListening : null,
@@ -863,10 +868,10 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
           if (_listening) {
             await _stopListening();
           } else {
-            await _startAndCloseApp(); // start native then close app
+            await _startListening();
           }
         },
-        label: Text(_listening ? 'Stop' : 'Start & Close'),
+        label: Text(_listening ? 'Stop' : 'Start'),
         icon: Icon(_listening ? Icons.stop : Icons.play_arrow),
       ),
     );
