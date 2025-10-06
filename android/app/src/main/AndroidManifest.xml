@@ -6,18 +6,20 @@
     <!-- ================== PERMISSIONS ================== -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.VIBRATE" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
-    <!-- Android 13+ (POST_NOTIFICATIONS runtime permission harus request di Flutter runtime) -->
+    <!-- Android 13+ runtime permission (harus request di Flutter runtime) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Foreground services -->
+    <!-- Foreground service permissions -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
-    <!-- Restart service saat boot -->
+    <!-- Agar device tidak tidur saat service jalan -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Restart service setelah boot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- ================== QUERIES (package visibility) ================== -->
@@ -34,7 +36,7 @@
             <data android:mimeType="text/plain" />
         </intent>
 
-        <!-- Beberapa target apps (contoh) -->
+        <!-- Beberapa target apps (opsional) -->
         <package android:name="com.whatsapp" />
         <package android:name="com.whatsapp.w4b" />
         <package android:name="org.telegram.messenger" />
@@ -87,10 +89,10 @@
             android:foregroundServiceType="dataSync|connectedDevice"
             android:exported="false" />
 
-        <!-- ===== Notification Listener Service ===== -->
+        <!-- ===== Custom Notification Listener Service ===== -->
         <service
             android:name="com.example.myxcreate.MyNotificationListenerService"
-            android:label="XC Notification Listener"
+            android:label="XC Listener Service"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
             android:exported="true">
             <intent-filter>
@@ -98,7 +100,18 @@
             </intent-filter>
         </service>
 
-        <!-- ===== Control Receiver (Start/Stop dari notifikasi native) ===== -->
+        <!-- ===== Plugin Notification Listener (opsional, jika masih dipakai plugin) ===== -->
+        <service
+            android:name="notification.listener.service.NotificationListener"
+            android:label="notifications"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- ===== Control Receiver (untuk tombol Start/Stop di notifikasi native) ===== -->
         <receiver
             android:name="com.example.myxcreate.ControlReceiver"
             android:exported="true" />
@@ -147,4 +160,4 @@
             android:name="flutterEmbedding"
             android:value="2" />
     </application>
-</manifest>
+</manifest> sesuaikan dan edit dan tampilkan lengkap
