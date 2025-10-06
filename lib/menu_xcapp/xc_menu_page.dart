@@ -1,6 +1,4 @@
-```dart
-// lib/menu_xcapp/xc_menu_page.dart
-// Diperbarui: perbaikan error saat Start / saat app ditutup (for close).
+
 // Pastikan file native (.kt) dan AndroidManifest sudah sesuai (MethodChannel name).
 import 'dart:async';
 import 'dart:convert';
@@ -850,4 +848,3 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
     );
   }
 }
-```
