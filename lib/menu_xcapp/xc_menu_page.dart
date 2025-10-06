@@ -16,23 +16,21 @@ import 'package:http/http.dart' as http;
 
 /// Keys SharedPreferences
 const String kPrefsSelectedApps = 'xc_selected_apps';
-const String kPrefsSelectedAppsJson = 'xc_selected_apps_json'; // JSON fallback for native
 const String kPrefsPostUrl = 'xc_post_url';
 const String kPrefsSavedNotifications = 'xc_saved_notifications';
 const String kPrefsPostLogs = 'xc_post_logs';
 const String kPrefsEnabled = 'xc_listener_enabled'; // used by native & flutter
 
-/// MethodChannel name (must match Kotlin MainActivity)
+/// MethodChannel name (must match MainActivity.kt)
 const MethodChannel _serviceChannel = MethodChannel('com.example.myxcreate/xc_service');
 
-/// (Models: NotificationItem & PostLog same as before — omitted here for brevity if you already have them)
+/// Model-lite: we store minimal fields, use Map/JSON to simplify
 class NotificationItem {
   final int? id;
   final String? packageName;
   final String? title;
   final String? content;
   final String timestamp;
-  final bool? canReply;
   final bool? hasRemoved;
 
   NotificationItem({
@@ -41,7 +39,6 @@ class NotificationItem {
     required this.title,
     required this.content,
     required this.timestamp,
-    required this.canReply,
     required this.hasRemoved,
   });
 
@@ -52,7 +49,6 @@ class NotificationItem {
       title: event.title,
       content: event.content,
       timestamp: DateTime.now().toIso8601String(),
-      canReply: event.canReply,
       hasRemoved: event.hasRemoved,
     );
   }
@@ -64,7 +60,6 @@ class NotificationItem {
       title: json['title'] as String?,
       content: json['content'] as String?,
       timestamp: json['timestamp'] as String,
-      canReply: json['canReply'] as bool?,
       hasRemoved: json['hasRemoved'] as bool?,
     );
   }
@@ -75,11 +70,11 @@ class NotificationItem {
         'title': title,
         'content': content,
         'timestamp': timestamp,
-        'canReply': canReply,
         'hasRemoved': hasRemoved,
       };
 }
 
+/// PostLog model (ke prefs)
 class PostLog {
   final String timestamp;
   final String url;
@@ -88,7 +83,7 @@ class PostLog {
   final String? text;
   final int? statusCode;
   final String responseBody;
-  final String error; // kosong bila no error
+  final String error;
 
   PostLog({
     required this.timestamp,
@@ -101,44 +96,16 @@ class PostLog {
     required this.error,
   });
 
-  factory PostLog.success({
-    required String url,
-    required String app,
-    String? title,
-    String? text,
-    required int statusCode,
-    required String responseBody,
-  }) {
-    return PostLog(
-      timestamp: DateTime.now().toIso8601String(),
-      url: url,
-      app: app,
-      title: title,
-      text: text,
-      statusCode: statusCode,
-      responseBody: responseBody,
-      error: '',
-    );
-  }
-
-  factory PostLog.failure({
-    required String url,
-    required String app,
-    String? title,
-    String? text,
-    required String error,
-  }) {
-    return PostLog(
-      timestamp: DateTime.now().toIso8601String(),
-      url: url,
-      app: app,
-      title: title,
-      text: text,
-      statusCode: null,
-      responseBody: '',
-      error: error,
-    );
-  }
+  Map<String, dynamic> toJson() => {
+        'timestamp': timestamp,
+        'url': url,
+        'app': app,
+        'title': title,
+        'text': text,
+        'statusCode': statusCode,
+        'responseBody': responseBody,
+        'error': error,
+      };
 
   factory PostLog.fromJson(Map<String, dynamic> j) {
     return PostLog(
@@ -153,19 +120,45 @@ class PostLog {
     );
   }
 
-  Map<String, dynamic> toJson() => {
-        'timestamp': timestamp,
-        'url': url,
-        'app': app,
-        'title': title,
-        'text': text,
-        'statusCode': statusCode,
-        'responseBody': responseBody,
-        'error': error,
-      };
+  factory PostLog.success({
+    required String url,
+    required String app,
+    String? title,
+    String? text,
+    required int statusCode,
+    required String responseBody,
+  }) =>
+      PostLog(
+        timestamp: DateTime.now().toIso8601String(),
+        url: url,
+        app: app,
+        title: title,
+        text: text,
+        statusCode: statusCode,
+        responseBody: responseBody,
+        error: '',
+      );
+
+  factory PostLog.failure({
+    required String url,
+    required String app,
+    String? title,
+    String? text,
+    required String error,
+  }) =>
+      PostLog(
+        timestamp: DateTime.now().toIso8601String(),
+        url: url,
+        app: app,
+        title: title,
+        text: text,
+        statusCode: null,
+        responseBody: '',
+        error: error,
+      );
 }
 
-/// NotificationHelper (sama dengan implementasi sebelumnya)
+/// Notification helper for local notifications (Flutter side)
 class NotificationHelper {
   static final FlutterLocalNotificationsPlugin plugin = FlutterLocalNotificationsPlugin();
   static const String channelId = 'xc_channel_id';
@@ -175,11 +168,9 @@ class NotificationHelper {
   static final StreamController<String> actionStream = StreamController<String>.broadcast();
 
   static Future<void> init() async {
-    const AndroidInitializationSettings androidInit =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const AndroidInitializationSettings androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
     final InitializationSettings settings = InitializationSettings(android: androidInit);
-    await plugin.initialize(settings,
-        onDidReceiveNotificationResponse: (NotificationResponse response) {
+    await plugin.initialize(settings, onDidReceiveNotificationResponse: (response) {
       final payload = response.payload;
       if (payload != null) actionStream.add(payload);
     });
@@ -191,27 +182,11 @@ class NotificationHelper {
       importance: Importance.max,
     );
 
-    await plugin
-        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(channel);
+    await plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()?.createNotificationChannel(channel);
     log('NotificationHelper initialized');
   }
 
-  static Future<void> showPersistent(int id, String title, String body) async {
-    final android = AndroidNotificationDetails(
-      channelId,
-      channelName,
-      channelDescription: channelDescription,
-      importance: Importance.defaultImportance,
-      priority: Priority.defaultPriority,
-      ongoing: true,
-      autoCancel: false,
-      onlyAlertOnce: true,
-    );
-    final details = NotificationDetails(android: android);
-    await plugin.show(id, title, body, details, payload: 'xc_persistent');
-  }
-
+  // One-shot event
   static Future<void> showOneShot(int id, String? title, String? body) async {
     final android = AndroidNotificationDetails(
       channelId,
@@ -225,7 +200,26 @@ class NotificationHelper {
     await plugin.show(id, title, body, details);
   }
 
-  static Future<void> cancel(int id) async => plugin.cancel(id);
+  // Local persistent - Flutter-side (native foreground is authoritative)
+  static Future<void> showPersistentLocal(int id, String title, String body) async {
+    final android = AndroidNotificationDetails(
+      channelId,
+      channelName,
+      channelDescription: channelDescription,
+      importance: Importance.defaultImportance,
+      priority: Priority.defaultPriority,
+      ongoing: true,
+      autoCancel: false,
+      onlyAlertOnce: true,
+    );
+    final details = NotificationDetails(android: android);
+    await plugin.show(id, title, body, details, payload: 'xc_persistent');
+    log('Persistent local shown: $title | $body');
+  }
+
+  static Future<void> cancel(int id) async {
+    await plugin.cancel(id);
+  }
 
   static void dispose() {
     try {
@@ -236,16 +230,21 @@ class NotificationHelper {
 
 class XcMenuPage extends StatefulWidget {
   const XcMenuPage({super.key});
+
   @override
   State<XcMenuPage> createState() => _XcMenuPageState();
 }
 
 class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateMixin {
+  // Streams
   StreamSubscription<ServiceNotificationEvent>? _sub;
   StreamSubscription<String>? _notifActionSub;
-  final List<NotificationItem> _savedNotifications = [];
-  final List<PostLog> _postLogs = [];
 
+  // Data
+  List<NotificationItem> _savedNotifications = [];
+  List<PostLog> _postLogs = [];
+
+  // installed apps
   List<AppInfo> _installedApps = [];
   Set<String> _selectedPackageNames = {};
 
@@ -253,6 +252,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
   bool _nativeEnabledFlag = false;
 
   static const int _persistentNotificationId = 9999;
+
   late TabController _tabController;
   bool _listening = false;
   bool _loadingApps = true;
@@ -263,6 +263,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
     _tabController = TabController(length: 4, vsync: this);
     _initAll();
 
+    // handle taps on persistent local notification (payload 'xc_persistent')
     _notifActionSub = NotificationHelper.actionStream.stream.listen((payload) async {
       if (payload == 'xc_persistent') {
         if (mounted) {
@@ -286,41 +287,54 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
   Future<void> _loadPrefs() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final List<String>? sel = prefs.getStringList(kPrefsSelectedApps);
-      if (sel != null) _selectedPackageNames = sel.toSet();
 
-      final String? jsonSel = prefs.getString(kPrefsSelectedAppsJson);
-      if (( _selectedPackageNames.isEmpty) && jsonSel != null && jsonSel.isNotEmpty) {
-        try {
-          final List<dynamic> list = jsonDecode(jsonSel);
-          _selectedPackageNames = list.map((e) => e.toString()).toSet();
-        } catch (_) {}
+      // selected apps: try read StringList first; fallback to JSON string
+      final List<String>? selList = prefs.getStringList(kPrefsSelectedApps);
+      if (selList != null && selList.isNotEmpty) {
+        _selectedPackageNames = selList.toSet();
+      } else {
+        final raw = prefs.getString(kPrefsSelectedApps);
+        if (raw != null && raw.isNotEmpty) {
+          try {
+            final decoded = jsonDecode(raw) as List<dynamic>;
+            _selectedPackageNames = decoded.map((e) => e.toString()).toSet();
+          } catch (_) {
+            _selectedPackageNames = {};
+          }
+        }
       }
 
-      final String? url = prefs.getString(kPrefsPostUrl);
+      final url = prefs.getString(kPrefsPostUrl);
       if (url != null) _postUrl = url;
 
-      final bool? enabled = prefs.getBool(kPrefsEnabled);
+      final enabled = prefs.getBool(kPrefsEnabled);
       _nativeEnabledFlag = enabled ?? false;
-      if (_nativeEnabledFlag && !_listening) _listening = true;
+      if (_nativeEnabledFlag) _listening = true;
 
-      final String? rawNotifs = prefs.getString(kPrefsSavedNotifications);
+      final rawNotifs = prefs.getString(kPrefsSavedNotifications);
       if (rawNotifs != null && rawNotifs.isNotEmpty) {
-        final decoded = jsonDecode(rawNotifs) as List<dynamic>;
-        _savedNotifications.clear();
-        _savedNotifications.addAll(decoded.map((e) => NotificationItem.fromJson(Map<String, dynamic>.from(e))));
+        try {
+          final decoded = jsonDecode(rawNotifs) as List<dynamic>;
+          _savedNotifications = decoded.map((e) => NotificationItem.fromJson(Map<String, dynamic>.from(e))).toList();
+        } catch (_) {
+          _savedNotifications = [];
+        }
       }
 
-      final String? rawLogs = prefs.getString(kPrefsPostLogs);
+      final rawLogs = prefs.getString(kPrefsPostLogs);
       if (rawLogs != null && rawLogs.isNotEmpty) {
-        final decoded = jsonDecode(rawLogs) as List<dynamic>;
-        _postLogs.clear();
-        _postLogs.addAll(decoded.map((e) => PostLog.fromJson(Map<String, dynamic>.from(e))));
+        try {
+          final decoded = jsonDecode(rawLogs) as List<dynamic>;
+          _postLogs = decoded.map((e) => PostLog.fromJson(Map<String, dynamic>.from(e))).toList();
+        } catch (_) {
+          _postLogs = [];
+        }
       }
+
       if (mounted) setState(() {});
-      log('Prefs loaded: selected=${_selectedPackageNames.length}, enabled=$_nativeEnabledFlag');
+      log('Prefs loaded: selected=${_selectedPackageNames.length}, notifications=${_savedNotifications.length}, logs=${_postLogs.length}, enabled=$_nativeEnabledFlag');
     } catch (e) {
-      log('Failed load prefs: $e');
+      log('loadPrefs error: $e');
     }
   }
 
@@ -328,15 +342,8 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
     final prefs = await SharedPreferences.getInstance();
     final list = _selectedPackageNames.toList();
     await prefs.setStringList(kPrefsSelectedApps, list);
-    // Also write JSON fallback so native can parse easily
-    await prefs.setString(kPrefsSelectedAppsJson, jsonEncode(list));
-    // If native service is running, tell it to refresh (best-effort)
-    try {
-      await _serviceChannel.invokeMethod('refreshSelectedApps');
-    } catch (e) {
-      // ignore if native doesn't implement
-      log('refreshSelectedApps platform error: $e');
-    }
+    // also save JSON fallback for native reading
+    await prefs.setString(kPrefsSelectedApps, jsonEncode(list));
   }
 
   Future<void> _savePostUrl() async {
@@ -363,8 +370,6 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
   }
 
   Future<void> _startNativeForeground() async {
-    // ensure selected apps saved for native to read
-    await _saveSelectedApps();
     try {
       await _serviceChannel.invokeMethod('startForeground');
     } catch (e) {
@@ -387,59 +392,64 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
       _installedApps = apps;
       log('Loaded ${_installedApps.length} installed apps');
     } catch (e) {
-      log('Failed to load installed apps: $e');
+      log('Failed load installed apps: $e');
       _installedApps = [];
     } finally {
       if (mounted) setState(() => _loadingApps = false);
     }
   }
 
+  // Start listening (Flutter-level) + ensure native set up
   Future<void> _startListening() async {
     if (_listening) return;
+
+    // save current selections and url to prefs so native can read them
+    await _saveSelectedApps();
+    await _savePostUrl();
     await _saveEnabledFlag(true);
+
+    // start native foreground service (native will show persistent ongoing notification)
     await _startNativeForeground();
-    await NotificationHelper.showPersistent(_persistentNotificationId, 'XC Listener aktif', 'Menangkap notifikasi');
 
+    // also show persistent local notif for debugging (native's is authoritative)
+    await NotificationHelper.showPersistentLocal(_persistentNotificationId, 'XC Listener aktif', 'Menangkap notifikasi');
+
+    // start stream for Flutter UI
     _sub?.cancel();
-    _sub = NotificationListenerService.notificationsStream.listen(
-      (ServiceNotificationEvent event) async {
-        try {
-          final String pkg = event.packageName ?? 'unknown';
-          // check selected apps: if none selected => capture all
-          if (_selectedPackageNames.isNotEmpty && !_selectedPackageNames.contains(pkg)) {
-            log('Ignored package $pkg (not selected)');
-            return;
-          }
+    _sub = NotificationListenerService.notificationsStream.listen((ServiceNotificationEvent event) async {
+      try {
+        final pkg = event.packageName ?? 'unknown';
 
-          final item = NotificationItem.fromEvent(event);
-          if (mounted) {
-            setState(() {
-              _savedNotifications.insert(0, item);
-            });
-          } else {
-            _savedNotifications.insert(0, item);
-          }
-          await _saveNotificationsToPrefs();
-
-          final int id = DateTime.now().millisecondsSinceEpoch.remainder(100000);
-          await NotificationHelper.showOneShot(id, item.title, item.content);
-
-          await NotificationHelper.showPersistent(
-              _persistentNotificationId, 'XC Listener aktif (${_savedNotifications.length})', '${item.packageName ?? "app"} — ${item.title ?? item.content ?? ""}');
-
-          if (_postUrl.trim().isNotEmpty) {
-            await _sendPostForItem(item);
-          }
-        } catch (e) {
-          log('Error handling event: $e');
+        // respect selected apps (if selection non-empty, ignore non-selected)
+        if (_selectedPackageNames.isNotEmpty && !_selectedPackageNames.contains(pkg)) {
+          log('Ignored package $pkg (not selected)');
+          return;
         }
-      },
-      onError: (e) {
-        log('Stream error: $e');
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Stream error: $e')));
-      },
-      cancelOnError: true,
-    );
+
+        final item = NotificationItem.fromEvent(event);
+        _savedNotifications.insert(0, item);
+        await _saveNotificationsToPrefs();
+
+        // show one-shot local notif for each event when app is alive
+        final int id = DateTime.now().millisecondsSinceEpoch.remainder(100000);
+        await NotificationHelper.showOneShot(id, item.title, item.content);
+
+        // update persistent local notif count
+        await NotificationHelper.showPersistentLocal(
+            _persistentNotificationId, 'XC Listener aktif (${_savedNotifications.length})', '${item.packageName ?? "app"} — ${item.title ?? item.content ?? ""}');
+
+        // post to URL
+        if (_postUrl.trim().isNotEmpty) {
+          await _sendPostForItem(item);
+        }
+        if (mounted) setState(() {});
+      } catch (e) {
+        log('handle event error: $e');
+      }
+    }, onError: (e) {
+      log('stream error: $e');
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Stream error: $e')));
+    }, cancelOnError: true);
 
     if (mounted) {
       setState(() {
@@ -451,11 +461,17 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
     }
   }
 
+  // Stop listening
   Future<void> _stopListening() async {
     _sub?.cancel();
     _sub = null;
+
     await _saveEnabledFlag(false);
+
+    // stop native foreground (native should remove its persistent notif)
     await _stopNativeForeground();
+
+    // cancel Flutter persistent local notif
     await NotificationHelper.cancel(_persistentNotificationId);
 
     if (mounted) {
@@ -472,22 +488,11 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
     final url = _postUrl.trim();
     if (url.isEmpty) return;
 
-    final bodyMap = {
-      'app': item.packageName ?? '',
-      'title': item.title ?? '',
-      'text': item.content ?? '',
-    };
+    final bodyMap = {'app': item.packageName ?? '', 'title': item.title ?? '', 'text': item.content ?? ''};
 
     try {
       final resp = await http.post(Uri.parse(url), body: bodyMap).timeout(const Duration(seconds: 15));
-      final logEntry = PostLog.success(
-        url: url,
-        app: item.packageName ?? '',
-        title: item.title,
-        text: item.content,
-        statusCode: resp.statusCode,
-        responseBody: resp.body,
-      );
+      final logEntry = PostLog.success(url: url, app: item.packageName ?? '', title: item.title, text: item.content, statusCode: resp.statusCode, responseBody: resp.body);
       _postLogs.insert(0, logEntry);
       await _saveLogsToPrefs();
       if (mounted) setState(() {});
@@ -501,10 +506,14 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
     }
   }
 
+  // toggle selecting package
   void _toggleSelectPackage(String packageName) {
     setState(() {
-      if (_selectedPackageNames.contains(packageName)) _selectedPackageNames.remove(packageName);
-      else _selectedPackageNames.add(packageName);
+      if (_selectedPackageNames.contains(packageName)) {
+        _selectedPackageNames.remove(packageName);
+      } else {
+        _selectedPackageNames.add(packageName);
+      }
     });
     _saveSelectedApps();
   }
@@ -521,6 +530,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
     if (mounted) setState(() {});
   }
 
+  // UI
   Widget _buildListenerTab() {
     return Column(
       children: [
@@ -538,19 +548,18 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
                   label: const Text('Request Access')),
               const SizedBox(width: 8),
               ElevatedButton.icon(
-                  onPressed: _listening ? null : _startListening,
-                  icon: const Icon(Icons.play_arrow),
-                  label: const Text('Start')),
+                  onPressed: () async {
+                    final bool g = await NotificationListenerService.isPermissionGranted();
+                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Access granted: $g')));
+                  },
+                  icon: const Icon(Icons.check),
+                  label: const Text('Check Access')),
               const SizedBox(width: 8),
-              ElevatedButton.icon(
-                  onPressed: _listening ? _stopListening : null,
-                  icon: const Icon(Icons.stop),
-                  label: const Text('Stop')),
+              ElevatedButton.icon(onPressed: _listening ? null : _startListening, icon: const Icon(Icons.play_arrow), label: const Text('Start')),
               const SizedBox(width: 8),
-              ElevatedButton.icon(
-                  onPressed: _clearSavedNotifications,
-                  icon: const Icon(Icons.delete_forever),
-                  label: const Text('Clear Saved')),
+              ElevatedButton.icon(onPressed: _listening ? _stopListening : null, icon: const Icon(Icons.stop), label: const Text('Stop')),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(onPressed: _clearSavedNotifications, icon: const Icon(Icons.delete_forever), label: const Text('Clear Saved')),
             ]),
           ),
         ),
@@ -648,11 +657,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
       child: Column(children: [
         TextField(
           controller: controller,
-          decoration: const InputDecoration(
-            labelText: 'POST URL',
-            hintText: 'https://your-server.example/notify',
-            border: OutlineInputBorder(),
-          ),
+          decoration: const InputDecoration(labelText: 'POST URL', hintText: 'https://your-server.example/notify', border: OutlineInputBorder()),
           keyboardType: TextInputType.url,
         ),
         const SizedBox(height: 8),
@@ -680,10 +685,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
               label: const Text('Clear')),
         ]),
         const SizedBox(height: 12),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: Text('Current URL:', style: TextStyle(fontWeight: FontWeight.bold)),
-        ),
+        Align(alignment: Alignment.centerLeft, child: Text('Current URL:', style: TextStyle(fontWeight: FontWeight.bold))),
         const SizedBox(height: 6),
         SelectableText(_postUrl.isEmpty ? '(not configured)' : _postUrl),
       ]),
