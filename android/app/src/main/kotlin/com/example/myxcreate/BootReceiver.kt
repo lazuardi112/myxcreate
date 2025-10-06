@@ -3,22 +3,22 @@ package com.example.myxcreate
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.util.Log
+import androidx.core.content.ContextCompat
 
 class BootReceiver : BroadcastReceiver() {
-    companion object {
-        private const val TAG = "BootReceiver"
-    }
-
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action == Intent.ACTION_BOOT_COMPLETED) {
-            Log.i(TAG, "BOOT_COMPLETED received — starting ForegroundStarterService")
-            val svc = Intent(context, ForegroundStarterService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(svc)
-            } else {
-                context.startService(svc)
+            val prefs = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+            val enabled = prefs.getBoolean("xc_listener_enabled", false)
+            if (enabled) {
+                try {
+                    val i = Intent(context, ForegroundStarterService::class.java)
+                    ContextCompat.startForegroundService(context, i)
+                    Log.d("BootReceiver", "Started ForegroundStarterService on boot")
+                } catch (e: Exception) {
+                    Log.w("BootReceiver", "failed start on boot: $e")
+                }
             }
         }
     }

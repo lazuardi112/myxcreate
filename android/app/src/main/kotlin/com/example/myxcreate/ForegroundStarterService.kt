@@ -1,60 +1,63 @@
 package com.example.myxcreate
 
+import android.app.Service
+import android.content.Intent
+import android.os.IBinder
 import android.app.Notification
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.app.Service
 import android.content.Context
-import android.content.Intent
+import android.util.Log
+import android.app.NotificationChannel
+import android.app.NotificationManager.IMPORTANCE_LOW
 import android.os.Build
-import android.os.IBinder
-import androidx.core.app.NotificationCompat
 
 class ForegroundStarterService : Service() {
-    companion object {
-        private const val CHANNEL_ID = "xc_foreground_channel"
-        private const val CHANNEL_NAME = "XC Foreground"
-        private const val NOTIF_ID = 9998
-
-        const val ACTION_START = "com.example.myxcreate.ACTION_START_LISTENER"
-        const val ACTION_STOP = "com.example.myxcreate.ACTION_STOP_LISTENER"
-    }
-
-    override fun onBind(intent: Intent?): IBinder? = null
+    private val TAG = "ForegroundStarter"
+    private val CHANNEL_ID = "xc_foreground_channel"
+    private val NOTIF_ID = 9999
 
     override fun onCreate() {
         super.onCreate()
         createChannel()
-        startForegroundWithActions("XC Listener running")
     }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        // PendingIntent untuk tombol Stop -> dikirim ke ControlReceiver
+        val stopIntent = Intent(this, ControlReceiver::class.java).apply {
+            action = "com.example.myxcreate.ACTION_STOP"
+        }
+        val stopPending = PendingIntent.getBroadcast(this, 0, stopIntent,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+
+        val builder = Notification.Builder(this, CHANNEL_ID)
+            .setContentTitle("XC Listener aktif")
+            .setContentText("Menangkap notifikasi")
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setOngoing(true)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPending)
+
+        val notif = builder.build()
+        startForeground(NOTIF_ID, notif)
+        Log.d(TAG, "ForegroundStarter started")
+        return START_STICKY
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Log.d(TAG, "ForegroundStarter destroyed")
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
 
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            val channel = NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_LOW)
-            channel.description = "Persistent XC notification"
-            nm.createNotificationChannel(channel)
+            val ch = NotificationChannel(CHANNEL_ID, "XC Background", IMPORTANCE_LOW)
+            ch.description = "Foreground service to keep listener running"
+            nm.createNotificationChannel(ch)
         }
-    }
-
-    private fun startForegroundWithActions(text: String) {
-        val startIntent = Intent(this, ControlReceiver::class.java).apply { action = ACTION_START }
-        val startPending = PendingIntent.getBroadcast(this, 1, startIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-
-        val stopIntent = Intent(this, ControlReceiver::class.java).apply { action = ACTION_STOP }
-        val stopPending = PendingIntent.getBroadcast(this, 2, stopIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-
-        val notif = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("XC Listener")
-            .setContentText(text)
-            .setSmallIcon(applicationInfo.icon)
-            .setOngoing(true)
-            .setAutoCancel(false)
-            .addAction(android.R.drawable.ic_media_play, "Start", startPending)
-            .addAction(android.R.drawable.ic_media_pause, "Stop", stopPending)
-            .build()
-
-        startForeground(NOTIF_ID, notif as Notification)
     }
 }

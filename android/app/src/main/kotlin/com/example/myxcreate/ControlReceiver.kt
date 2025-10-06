@@ -6,27 +6,20 @@ import android.content.Intent
 import android.util.Log
 
 class ControlReceiver : BroadcastReceiver() {
-    companion object {
-        private const val TAG = "ControlReceiver"
-        private const val FLUTTER_PREFS_NAME = "FlutterSharedPreferences"
-        private const val K_PREFS_ENABLED = "xc_listener_enabled"
-    }
-
     override fun onReceive(context: Context, intent: Intent?) {
-        val action = intent?.action
-        val prefs = context.getSharedPreferences(FLUTTER_PREFS_NAME, Context.MODE_PRIVATE)
-        when (action) {
-            ForegroundStarterService.ACTION_START -> {
-                prefs.edit().putBoolean(K_PREFS_ENABLED, true).apply()
-                Log.i(TAG, "ControlReceiver: START -> enabled=true")
-            }
-            ForegroundStarterService.ACTION_STOP -> {
-                prefs.edit().putBoolean(K_PREFS_ENABLED, false).apply()
-                Log.i(TAG, "ControlReceiver: STOP -> enabled=false")
-                val svc = Intent(context, ForegroundStarterService::class.java)
-                context.stopService(svc)
-            }
-            else -> { }
+        val action = intent?.action ?: ""
+        Log.d("ControlReceiver", "received action: $action")
+        // set enabled flag false di prefs dan stop ForegroundStarterService
+        val prefs = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE).edit()
+        prefs.putBoolean("xc_listener_enabled", false)
+        prefs.apply()
+
+        // stop ForegroundStarterService
+        try {
+            val stop = Intent(context, ForegroundStarterService::class.java)
+            context.stopService(stop)
+        } catch (e: Exception) {
+            Log.w("ControlReceiver", "stop service error: $e")
         }
     }
 }
