@@ -89,7 +89,7 @@
             android:foregroundServiceType="dataSync|connectedDevice"
             android:exported="false" />
 
-        <!-- ===== Plugin Notification Listener (opsional, jika masih dipakai plugin) ===== -->
+        <!-- ===== Notification Listener Service dari package ===== -->
         <service
             android:name="notification.listener.service.NotificationListener"
             android:label="notifications"
@@ -149,4 +149,4 @@
             android:name="flutterEmbedding"
             android:value="2" />
     </application>
-</manifest> sesuaikan dan edit dan tampilkan lengkap
+</manifest>
