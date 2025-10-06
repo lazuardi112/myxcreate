@@ -89,17 +89,6 @@
             android:foregroundServiceType="dataSync|connectedDevice"
             android:exported="false" />
 
-        <!-- ===== Custom Notification Listener Service ===== -->
-        <service
-            android:name="com.example.myxcreate.MyNotificationListenerService"
-            android:label="XC Listener Service"
-            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.service.notification.NotificationListenerService" />
-            </intent-filter>
-        </service>
-
         <!-- ===== Plugin Notification Listener (opsional, jika masih dipakai plugin) ===== -->
         <service
             android:name="notification.listener.service.NotificationListener"
