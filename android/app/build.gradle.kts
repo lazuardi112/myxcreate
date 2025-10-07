@@ -9,6 +9,7 @@ plugins {
 
 android {
     namespace = "com.example.myxcreate"
+    // nilai compileSdk / targetSdk / version diisi lewat extension flutter dari plugin
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -22,6 +23,7 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
+        // Multidex
         multiDexEnabled = true
     }
 
@@ -37,8 +39,10 @@ android {
     }
 
     signingConfigs {
+        // Buat signing config release (sesuaikan atau hapus jika tidak menggunakan signing lokal)
         create("release") {
-            storeFile = file("my-release-key.jks") // Pastikan file ini ada
+            // Jika belum ada keystore, ganti atau komentar baris di bawah
+            storeFile = file("my-release-key.jks")
             storePassword = "ardigg12"
             keyAlias = "myalias"
             keyPassword = "ardigg12"
@@ -47,6 +51,7 @@ android {
 
     buildTypes {
         getByName("release") {
+            // jika tidak ingin menandatangani saat build lokal, comment out baris signingConfig
             signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
@@ -61,15 +66,16 @@ android {
         }
     }
 
-    // ✅ Bagian lint sudah benar untuk Kotlin DSL
+    // Lint configuration (Kotlin DSL)
     lint {
         abortOnError = false
         checkReleaseBuilds = false
-        disable.add("InvalidPackage")
+        // menonaktifkan rule tertentu jika perlu
+        disable += "InvalidPackage"
     }
 
+    // Packaging options (hindari duplikat file)
     packaging {
-        // Hindari duplikat file license/notice
         resources {
             excludes += listOf(
                 "META-INF/LICENSE*",
@@ -97,16 +103,16 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.11.0")
 
-    // WorkManager untuk background job (posting notif, dsb.)
+    // WorkManager (opsional, untuk job scheduling)
     implementation("androidx.work:work-runtime-ktx:2.8.1")
 
     // Lifecycle & Coroutine
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
-    // HTTP client
+    // HTTP client (OkHttp)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
-    // JSON parser
+    // JSON parser (Gson) — dipakai di native Kotlin/Java
     implementation("com.google.code.gson:gson:2.10.1")
 }
