@@ -209,7 +209,6 @@ class NotificationHelper {
       ongoing: true,
       autoCancel: false,
       onlyAlertOnce: true,
-      // You can add actions in native side for Stop button (native recommended)
     );
     final details = NotificationDetails(android: android);
     await plugin.show(id, title, body, details, payload: 'xc_persistent');
@@ -533,8 +532,8 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
     }
   }
 
-  /// Start listener then close the app UI (so service runs while app closed)
-  Future<void> _startAndCloseApp() async {
+  /// Start listener and stay in app (previously closed the app; now removed)
+  Future<void> _startAndStay() async {
     // check notification access permission first (Android)
     if (Platform.isAndroid) {
       final granted = await NotificationListenerService.isPermissionGranted();
@@ -547,33 +546,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
       }
     }
 
-    // start listening (native + flutter stream)
-    await _startListening();
-
-    // slight delay to let native start before closing UI
-    await Future.delayed(const Duration(milliseconds: 350));
-
-    // close app UI (service remains if native implemented correctly)
-    try {
-      SystemNavigator.pop();
-    } catch (e) {
-      log('SystemNavigator.pop error: $e');
-    }
-  }
-
-  /// Start listening but don't close the app UI
-  Future<void> _startWithoutClose() async {
-    if (Platform.isAndroid) {
-      final granted = await NotificationListenerService.isPermissionGranted();
-      if (!granted) {
-        final res = await NotificationListenerService.requestPermission();
-        if (!res) {
-          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please grant Notification Access first')));
-          return;
-        }
-      }
-    }
-
+    // start listening (native + flutter stream) and DO NOT close app
     await _startListening();
   }
 
@@ -611,22 +584,12 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
   }
 
   // UI actions: toggling app selection
-  // Accept explicit value to reflect user's tap state
-  void _toggleSelectPackage(String packageName, [bool? value]) {
+  void _toggleSelectPackage(String packageName) {
     setState(() {
-      if (value == null) {
-        // toggle
-        if (_selectedPackageNames.contains(packageName)) {
-          _selectedPackageNames.remove(packageName);
-        } else {
-          _selectedPackageNames.add(packageName);
-        }
+      if (_selectedPackageNames.contains(packageName)) {
+        _selectedPackageNames.remove(packageName);
       } else {
-        if (value) {
-          _selectedPackageNames.add(packageName);
-        } else {
-          _selectedPackageNames.remove(packageName);
-        }
+        _selectedPackageNames.add(packageName);
       }
     });
     _saveSelectedApps();
@@ -678,14 +641,9 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
                   label: const Text('Check Access')),
               const SizedBox(width: 8),
               ElevatedButton.icon(
-                  onPressed: _listening ? null : _startWithoutClose,
+                  onPressed: _listening ? null : _startAndStay,
                   icon: const Icon(Icons.play_arrow),
                   label: const Text('Start')),
-              const SizedBox(width: 8),
-              ElevatedButton.icon(
-                  onPressed: _listening ? null : _startAndCloseApp,
-                  icon: const Icon(Icons.open_in_new),
-                  label: const Text('Start & Close')),
               const SizedBox(width: 8),
               ElevatedButton.icon(
                   onPressed: _listening ? _stopListening : null,
@@ -777,7 +735,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
 
               return CheckboxListTile(
                 value: _selectedPackageNames.contains(pkg),
-                onChanged: (bool? v) => _toggleSelectPackage(pkg, v),
+                onChanged: (v) => _toggleSelectPackage(pkg),
                 title: Text(name),
                 subtitle: Text(pkg),
                 secondary: leading,
@@ -929,8 +887,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
           if (_listening) {
             await _stopListening();
           } else {
-            // quick start without closing
-            await _startWithoutClose();
+            await _startAndStay(); // start and remain in app UI
           }
         },
         label: Text(_listening ? 'Stop' : 'Start'),
