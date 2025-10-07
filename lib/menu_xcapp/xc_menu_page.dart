@@ -209,6 +209,7 @@ class NotificationHelper {
       ongoing: true,
       autoCancel: false,
       onlyAlertOnce: true,
+      // You can add actions in native side for Stop button (native recommended)
     );
     final details = NotificationDetails(android: android);
     await plugin.show(id, title, body, details, payload: 'xc_persistent');
@@ -560,6 +561,22 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
     }
   }
 
+  /// Start listening but don't close the app UI
+  Future<void> _startWithoutClose() async {
+    if (Platform.isAndroid) {
+      final granted = await NotificationListenerService.isPermissionGranted();
+      if (!granted) {
+        final res = await NotificationListenerService.requestPermission();
+        if (!res) {
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please grant Notification Access first')));
+          return;
+        }
+      }
+    }
+
+    await _startListening();
+  }
+
   Future<void> _sendPostForItem(NotificationItem item) async {
     final url = _postUrl.trim();
     if (url.isEmpty) return;
@@ -594,12 +611,22 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
   }
 
   // UI actions: toggling app selection
-  void _toggleSelectPackage(String packageName) {
+  // Accept explicit value to reflect user's tap state
+  void _toggleSelectPackage(String packageName, [bool? value]) {
     setState(() {
-      if (_selectedPackageNames.contains(packageName)) {
-        _selectedPackageNames.remove(packageName);
+      if (value == null) {
+        // toggle
+        if (_selectedPackageNames.contains(packageName)) {
+          _selectedPackageNames.remove(packageName);
+        } else {
+          _selectedPackageNames.add(packageName);
+        }
       } else {
-        _selectedPackageNames.add(packageName);
+        if (value) {
+          _selectedPackageNames.add(packageName);
+        } else {
+          _selectedPackageNames.remove(packageName);
+        }
       }
     });
     _saveSelectedApps();
@@ -651,9 +678,14 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
                   label: const Text('Check Access')),
               const SizedBox(width: 8),
               ElevatedButton.icon(
-                  onPressed: _listening ? null : _startAndCloseApp,
+                  onPressed: _listening ? null : _startWithoutClose,
                   icon: const Icon(Icons.play_arrow),
-                  label: const Text('Start & Close App')),
+                  label: const Text('Start')),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                  onPressed: _listening ? null : _startAndCloseApp,
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('Start & Close')),
               const SizedBox(width: 8),
               ElevatedButton.icon(
                   onPressed: _listening ? _stopListening : null,
@@ -745,7 +777,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
 
               return CheckboxListTile(
                 value: _selectedPackageNames.contains(pkg),
-                onChanged: (v) => _toggleSelectPackage(pkg),
+                onChanged: (bool? v) => _toggleSelectPackage(pkg, v),
                 title: Text(name),
                 subtitle: Text(pkg),
                 secondary: leading,
@@ -897,10 +929,11 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
           if (_listening) {
             await _stopListening();
           } else {
-            await _startAndCloseApp(); // start native then close app
+            // quick start without closing
+            await _startWithoutClose();
           }
         },
-        label: Text(_listening ? 'Stop' : 'Start & Close'),
+        label: Text(_listening ? 'Stop' : 'Start'),
         icon: Icon(_listening ? Icons.stop : Icons.play_arrow),
       ),
     );
