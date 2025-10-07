@@ -1,8 +1,9 @@
 // android/app/build.gradle.kts
+
 plugins {
     id("com.android.application")
-    id("kotlin-android")
-    // Flutter Gradle Plugin harus tetap dipanggil terakhir
+    id("org.jetbrains.kotlin.android")
+    // Flutter Gradle Plugin wajib dipanggil terakhir
     id("dev.flutter.flutter-gradle-plugin")
 }
 
@@ -13,6 +14,8 @@ android {
 
     defaultConfig {
         applicationId = "com.example.myxcreate"
+
+        // Minimal SDK modern untuk service & background tasks
         minSdk = 23
         targetSdk = flutter.targetSdkVersion
 
@@ -20,13 +23,22 @@ android {
         versionName = flutter.versionName
 
         multiDexEnabled = true
-        vectorDrawables.useSupportLibrary = true
+    }
+
+    compileOptions {
+        // Aktifkan dukungan Java 11 dan desugaring
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+        isCoreLibraryDesugaringEnabled = true
+    }
+
+    kotlinOptions {
+        jvmTarget = "11"
     }
 
     signingConfigs {
         create("release") {
-            // isi jika ingin signing release. Jika belum, biarkan/default.
-            storeFile = file("my-release-key.jks")
+            storeFile = file("my-release-key.jks") // Pastikan file ini ada
             storePassword = "ardigg12"
             keyAlias = "myalias"
             keyPassword = "ardigg12"
@@ -35,52 +47,37 @@ android {
 
     buildTypes {
         getByName("release") {
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
-                file("proguard-rules.pro")
+                "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("release")
         }
+
         getByName("debug") {
             isMinifyEnabled = false
         }
     }
 
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
-        // aktifkan desugaring untuk Java8+ APIs
-        isCoreLibraryDesugaringEnabled = true
-    }
-
-    kotlinOptions {
-        jvmTarget = "11"
-    }
-
+    // ✅ Bagian lint sudah benar untuk Kotlin DSL
     lint {
-        isAbortOnError = false
+        abortOnError = false
+        checkReleaseBuilds = false
+        disable.add("InvalidPackage")
     }
 
-    // Packaging options: gunakan metode Kotlin DSL yang benar (addAll setOf)
     packaging {
+        // Hindari duplikat file license/notice
         resources {
-            // tambahkan excludes dengan benar (tidak menggunakan [ ... ] Groovy literal)
-            excludes.addAll(
-                setOf(
-                    "META-INF/LICENSE*",
-                    "META-INF/DEPENDENCIES",
-                    "META-INF/NOTICE*",
-                    "META-INF/NOTICE",
-                    "META-INF/LICENSE"
-                )
+            excludes += listOf(
+                "META-INF/LICENSE*",
+                "META-INF/NOTICE*",
+                "META-INF/DEPENDENCIES",
+                "META-INF/INDEX.LIST"
             )
         }
-    }
-
-    buildFeatures {
-        buildConfig = true
     }
 }
 
@@ -89,26 +86,27 @@ flutter {
 }
 
 dependencies {
-    // Kotlin stdlib
-    implementation("org.jetbrains.kotlin:kotlin-stdlib:1.8.22")
-
-    // Desugaring (Java 8+)
+    // Desugaring agar bisa pakai API Java 8+ di Android lama
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 
     // Multidex
     implementation("androidx.multidex:multidex:2.0.1")
 
-    // AndroidX & Material
+    // AndroidX dasar
     implementation("androidx.core:core-ktx:1.10.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.11.0")
 
-    // WorkManager, Lifecycle, Coroutines
+    // WorkManager untuk background job (posting notif, dsb.)
     implementation("androidx.work:work-runtime-ktx:2.8.1")
+
+    // Lifecycle & Coroutine
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
-    // Network & JSON
+    // HTTP client
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // JSON parser
     implementation("com.google.code.gson:gson:2.10.1")
 }
