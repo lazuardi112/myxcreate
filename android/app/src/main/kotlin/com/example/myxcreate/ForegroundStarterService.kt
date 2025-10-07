@@ -1,21 +1,17 @@
+// android/app/src/main/kotlin/com/example/myxcreate/ForegroundStarterService.kt
 package com.example.myxcreate
 
-import android.app.Service
-import android.content.Intent
-import android.os.IBinder
-import android.app.Notification
-import android.app.NotificationManager
-import android.app.PendingIntent
+import android.app.*
 import android.content.Context
-import android.util.Log
-import android.app.NotificationChannel
-import android.app.NotificationManager.IMPORTANCE_LOW
+import android.content.Intent
 import android.os.Build
+import android.os.IBinder
+import androidx.core.app.NotificationCompat
 
 class ForegroundStarterService : Service() {
-    private val TAG = "ForegroundStarter"
-    private val CHANNEL_ID = "xc_foreground_channel"
-    private val NOTIF_ID = 9999
+    private val CHANNEL_ID = "xc_native_foreground_channel"
+    private val NOTIF_ID = 4001
+    private val CONTROL_STOP = "com.example.myxcreate.ACTION_STOP_SERVICE"
 
     override fun onCreate() {
         super.onCreate()
@@ -23,31 +19,27 @@ class ForegroundStarterService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        // Build a persistent notification with STOP action
+        val stopIntent = Intent(this, ControlReceiver::class.java).apply { action = CONTROL_STOP }
+        val stopPending = PendingIntent.getBroadcast(this, 0, stopIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
-        // PendingIntent untuk tombol Stop -> dikirim ke ControlReceiver
-        val stopIntent = Intent(this, ControlReceiver::class.java).apply {
-            action = "com.example.myxcreate.ACTION_STOP"
-        }
-        val stopPending = PendingIntent.getBroadcast(this, 0, stopIntent,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
-
-        val builder = Notification.Builder(this, CHANNEL_ID)
+        val notif = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("XC Listener aktif")
-            .setContentText("Menangkap notifikasi")
+            .setContentText("Menangkap notifikasi (tap STOP untuk hentikan)")
             .setSmallIcon(R.mipmap.ic_launcher)
             .setOngoing(true)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPending)
+            .addAction(NotificationCompat.Action.Builder(0, "STOP", stopPending).build())
+            .build()
 
-        val notif = builder.build()
         startForeground(NOTIF_ID, notif)
-        Log.d(TAG, "ForegroundStarter started")
+
+        // ensure NotificationListenerService kept running / or Native listener reads settings
         return START_STICKY
     }
 
     override fun onDestroy() {
+        stopForeground(true)
         super.onDestroy()
-        Log.d(TAG, "ForegroundStarter destroyed")
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -55,8 +47,8 @@ class ForegroundStarterService : Service() {
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            val ch = NotificationChannel(CHANNEL_ID, "XC Background", IMPORTANCE_LOW)
-            ch.description = "Foreground service to keep listener running"
+            val ch = NotificationChannel(CHANNEL_ID, "XC Native Foreground", NotificationManager.IMPORTANCE_LOW)
+            ch.setShowBadge(false)
             nm.createNotificationChannel(ch)
         }
     }
