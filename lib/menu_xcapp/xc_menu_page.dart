@@ -209,6 +209,7 @@ class NotificationHelper {
       ongoing: true,
       autoCancel: false,
       onlyAlertOnce: true,
+      // Tambahkan action via payload: payload 'xc_persistent' ditangkap oleh actionStream di Flutter
     );
     final details = NotificationDetails(android: android);
     await plugin.show(id, title, body, details, payload: 'xc_persistent');
@@ -532,9 +533,9 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
     }
   }
 
-  /// Start listener and stay in app (previously closed the app; now removed)
-  Future<void> _startAndStay() async {
-    // check notification access permission first (Android)
+  /// Start listener (but *tidak* menutup aplikasi) — sesuai permintaan user
+  Future<void> _startOnly() async {
+    // cek permission & start
     if (Platform.isAndroid) {
       final granted = await NotificationListenerService.isPermissionGranted();
       if (!granted) {
@@ -545,8 +546,6 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
         }
       }
     }
-
-    // start listening (native + flutter stream) and DO NOT close app
     await _startListening();
   }
 
@@ -641,7 +640,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
                   label: const Text('Check Access')),
               const SizedBox(width: 8),
               ElevatedButton.icon(
-                  onPressed: _listening ? null : _startAndStay,
+                  onPressed: _listening ? null : _startOnly,
                   icon: const Icon(Icons.play_arrow),
                   label: const Text('Start')),
               const SizedBox(width: 8),
@@ -887,7 +886,7 @@ class _XcMenuPageState extends State<XcMenuPage> with SingleTickerProviderStateM
           if (_listening) {
             await _stopListening();
           } else {
-            await _startAndStay(); // start and remain in app UI
+            await _startOnly(); // START but DO NOT CLOSE the app
           }
         },
         label: Text(_listening ? 'Stop' : 'Start'),
