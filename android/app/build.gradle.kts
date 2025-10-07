@@ -1,45 +1,35 @@
+// android/app/build.gradle
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
-    // Flutter Gradle Plugin harus dipanggil terakhir
+    // Flutter Gradle Plugin harus selalu dipanggil terakhir
     id("dev.flutter.flutter-gradle-plugin")
 }
 
 android {
     namespace = "com.example.myxcreate"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion // ✅ gunakan NDK bawaan Flutter
+    ndkVersion = flutter.ndkVersion // gunakan versi NDK bawaan Flutter agar kompatibel
 
     defaultConfig {
         applicationId = "com.example.myxcreate"
-
-        // ✅ minSdk 23 supaya kompatibel dengan plugin modern (WorkManager, ForegroundService)
-        minSdk = 23
+        minSdk = 23 // minimal SDK modern agar service dan notifikasi bisa berjalan
         targetSdk = flutter.targetSdkVersion
 
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
-        multiDexEnabled = true
-    }
-
-    compileOptions {
-        // ✅ aktifkan Java 11 dengan desugaring
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
-        isCoreLibraryDesugaringEnabled = true
-    }
-
-    kotlinOptions {
-        jvmTarget = "11"
+        multiDexEnabled = true // mencegah 64K method error
+        vectorDrawables.useSupportLibrary = true
     }
 
     signingConfigs {
         create("release") {
-            storeFile = file("my-release-key.jks")   // path ke keystore
-            storePassword = "ardigg12"               // password keystore
-            keyAlias = "myalias"                     // alias key
-            keyPassword = "ardigg12"                 // password key
+            storeFile = file("my-release-key.jks") // ganti jika lokasi file berbeda
+            storePassword = "ardigg12"
+            keyAlias = "myalias"
+            keyPassword = "ardigg12"
         }
     }
 
@@ -58,8 +48,30 @@ android {
         }
     }
 
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+        isCoreLibraryDesugaringEnabled = true // aktifkan desugaring
+    }
+
+    kotlinOptions {
+        jvmTarget = "11"
+    }
+
     lint {
         abortOnError = false
+    }
+
+    buildFeatures {
+        buildConfig = true
+    }
+
+    packagingOptions {
+        resources.excludes += [
+            "META-INF/LICENSE*",
+            "META-INF/DEPENDENCIES",
+            "META-INF/NOTICE*"
+        ]
     }
 }
 
@@ -68,27 +80,30 @@ flutter {
 }
 
 dependencies {
-    // ✅ Desugaring untuk Java 8+ API
-    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
-
-    // ✅ Multidex agar tidak error 64K methods
-    implementation("androidx.multidex:multidex:2.0.1")
-
-    // ✅ AndroidX dasar
+    // ================================================================
+    // 🔹 Android & Kotlin Dasar
+    // ================================================================
+    implementation("org.jetbrains.kotlin:kotlin-stdlib:1.8.22")
     implementation("androidx.core:core-ktx:1.10.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.11.0")
 
-    // ✅ WorkManager untuk background tasks (posting notifikasi ke URL)
-    implementation("androidx.work:work-runtime-ktx:2.8.1")
+    // ================================================================
+    // 🔹 Desugaring & Multidex
+    // ================================================================
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+    implementation("androidx.multidex:multidex:2.0.1")
 
-    // ✅ Lifecycle & coroutine (jalan bareng WorkManager/ForegroundService)
+    // ================================================================
+    // 🔹 Lifecycle & Background
+    // ================================================================
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
+    implementation("androidx.work:work-runtime-ktx:2.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
-    // ✅ OkHttp untuk HTTP POST ke server
+    // ================================================================
+    // 🔹 Networking & JSON
+    // ================================================================
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-
-    // ✅ Gson untuk parsing JSON (fix unresolved reference Gson/TypeToken)
     implementation("com.google.code.gson:gson:2.10.1")
 }
