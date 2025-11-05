@@ -381,6 +381,18 @@ class _PengaturanPageState extends State<PengaturanPage> {
                           },
                         ),
                       ),
+                      const SizedBox(height: 20),
+                      Card(
+                        child: ListTile(
+                          leading: const Icon(Icons.notifications_active, color: Colors.orange),
+                          title: const Text("Notification Catcher"),
+                          subtitle: const Text("Atur penangkapan notifikasi dari aplikasi lain"),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () {
+                            Navigator.pushNamed(context, '/notification_catcher');
+                          },
+                        ),
+                      ),
                     ],
                   ),
                 ),

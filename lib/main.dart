@@ -16,6 +16,7 @@ import 'package:myxcreate/menu_fitur/midtrans/riwayat.dart';
 import 'package:myxcreate/menu_fitur/pembayaran_service.dart';
 import 'package:myxcreate/menu_fitur/riwayat_transfer.dart';
 import 'package:myxcreate/menu_fitur/upload_produk.dart';
+import 'package:myxcreate/pages/notif_catcher_page.dart';
 import 'package:myxcreate/pages/user_notif.dart';
 import 'package:myxcreate/store/detail.dart';
 import 'package:myxcreate/store/store.dart';
@@ -52,9 +53,11 @@ void accessibilityOverlay() {
   ));
 }
 
+import 'package:myxcreate/services/notification_capture.dart';
+
 Future<void> main() async {
   WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
-
+  await NotificationCaptureService().initialize();
   _initForegroundTaskGlobal();
 
   if (kIsWeb) {
@@ -314,6 +317,7 @@ class MyApp extends StatelessWidget {
         '/riwayat_midtrans': (context) => RiwayatMidtransPage(),
         '/koneksi_midtrans': (context) => KoneksiMidtransPage(),
         '/user_notif': (context) => UserNotifPage(),
+        '/notification_catcher': (context) => const NotificationCatcherPage(),
       },
     );
   }
